@@ -1,0 +1,87 @@
+{
+  "General": {
+    "DataRoot": "D:\\SCCMDriverAutomation",
+    "LogMaxSizeMB": 10,
+    "LogHistory": 10,
+    "MinimumFreeSpaceGB": 40,
+    "KeepDownloads": false,
+    "LockTimeoutMinutes": 30
+  },
+
+  "ConfigMgr": {
+    "SiteCode": "",
+    "ProviderMachine": "",
+    "CimProtocol": "Dcom",
+    "PackageSourceLocalRoot": "E:\\Sources\\DriverPackages",
+    "PackageSourceUncRoot": "\\\\CM01.corp.example.com\\Sources$\\DriverPackages",
+    "ContentFormat": "WIM",
+    "ProductionNamePrefix": "Drivers",
+    "PilotNamePrefix": "Drivers Pilot",
+    "ConsoleFolder": "Driver Packages",
+    "DistributionPointGroups": [ "All Distribution Points" ],
+    "DistributionPoints": [],
+    "DistributionPriority": "Normal",
+    "EnableBinaryDeltaReplication": true,
+    "AdoptExistingPackages": false
+  },
+
+  "Versioning": {
+    "RetainVersions": 3,
+    "PilotRing": {
+      "Enabled": true,
+      "AutoPromoteAfterDays": 14,
+      "SeedProductionOnFirstImport": true
+    }
+  },
+
+  "Network": {
+    "ProxyMode": "WinHttp",
+    "ProxyUrl": "",
+    "ProxyBypass": [],
+    "ProxyAuthentication": "DefaultCredentials",
+    "TimeoutSeconds": 120,
+    "StallTimeoutSeconds": 120,
+    "RetryCount": 4,
+    "RetryDelaySeconds": 20,
+    "UserAgent": "SCCMDriverAutomation/1.0 (+Configuration Manager driver automation)",
+    "AllowedDomains": [ "dell.com", "hp.com", "lenovo.com" ]
+  },
+
+  "Security": {
+    "VerifyCatalogSignature": true,
+    "TrustedPublishers": [ "Dell Inc*", "Dell Technologies*", "HP Inc*", "Hewlett-Packard*", "Hewlett Packard*", "Lenovo*" ],
+    "DefenderScan": true
+  },
+
+  "Extraction": {
+    "TimeoutMinutes": 60
+  },
+
+  "Models": [
+    {
+      "Vendor": "Dell",
+      "Model": "Latitude 7440",
+      "SystemIds": [ "0C0B", "0C0C", "0C0D" ],
+      "OperatingSystems": [ { "Name": "Windows 11", "Architecture": "x64" } ]
+    },
+    {
+      "Vendor": "Dell",
+      "Model": "OptiPlex 7010 Tower",
+      "SystemIds": [ "0BCC", "0BCD", "0BCE", "0BCF" ],
+      "OperatingSystems": [ { "Name": "Windows 11", "Architecture": "x64" } ]
+    },
+    {
+      "Vendor": "HP",
+      "Model": "HP EliteBook 840 14 inch G10 Notebook PC",
+      "SystemIds": [ "8B41" ],
+      "OperatingSystems": [ { "Name": "Windows 11", "Build": "24H2", "Architecture": "x64" } ]
+    },
+    {
+      "Vendor": "Lenovo",
+      "Model": "ThinkPad T14 Gen 4",
+      "SystemIds": [ "21HD", "21HE" ],
+      "OperatingSystems": [ { "Name": "Windows 11", "Build": "24H2", "Architecture": "x64" } ],
+      "Enabled": true
+    }
+  ]
+}
