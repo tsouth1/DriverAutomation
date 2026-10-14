@@ -24,6 +24,7 @@ design differs.
 | `Invoke-DriverPromotion.ps1` | Promote Pilot (or a specific version) to Production |
 | `Set-DriverDeploymentState.ps1` | Block / unblock versions, hold / release rings (ledger only) |
 | `Get-DriverVersionReport.ps1` | What is deployed where, rollback targets, history, DP status |
+| `Start-DriverAutomationGUI.ps1` | Management GUI: versions and history, promote / roll back / block / hold, runs, configuration editor, log and report viewer |
 | `Set-DriverAutomationProxyCredential.ps1` | Store a proxy credential (only if computer-account auth is not possible) |
 | `Install-DriverAutomation.ps1` | Install, lock down ACLs, register the event source and the SYSTEM scheduled task, run the preflight |
 | `Config\DriverAutomation.json` | All settings and the list of managed models |
@@ -159,6 +160,28 @@ show up: proxy 407 errors for the computer account, missing RBAC, and share perm
 ---
 
 ## Day-to-day operations
+
+### Management GUI
+
+The installer adds **Start menu > SCCM Driver Automation**. You can also run
+`.\Start-DriverAutomationGUI.ps1` from the install folder. It asks for elevation because the scripts
+require it.
+
+| Tab | What it does |
+|---|---|
+| Models & versions | Each model / OS with its Production and Pilot version, package IDs, latest catalog release, rollback target and holds. Select one to see its staged versions and audit history. Buttons: Promote, Roll back, Block / Unblock version, Hold / Release ring. Each asks for a reason. |
+| Run | Preflight, dry run or full run for selected vendors and models, as you. Shows the scheduled task's state, last result and next run, and can start it (as SYSTEM). |
+| Configuration | Models grid with their operating systems, plus a form for every other setting. Save validates with the same rules as the scripts and warns when a path's drive doesn't exist on this server. The previous file is kept as `DriverAutomation.json.bak`. |
+| Logs | CMTrace log viewer with filter, warnings-only and auto-refresh. Opens the log in CMTrace when it is installed. |
+| Run reports | The CSV report of each run, colour-coded by status. |
+
+The GUI contains no deployment logic. Every button runs the matching script below in a separate
+Windows PowerShell process and shows its output, so the run lock, ledger, logs and event log behave
+exactly as they do from the command line. Promote, roll back and runs from the Run tab use **your**
+account, which needs the ConfigMgr rights in [ConfigMgr permissions](#configmgr-permissions). Only the
+scheduled task runs as the computer account.
+
+### Command line
 
 ```powershell
 cd 'C:\Program Files\SCCMDriverAutomation'

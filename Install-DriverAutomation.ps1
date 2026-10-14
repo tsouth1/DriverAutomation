@@ -12,7 +12,8 @@
     4. Registers the 'SCCMDriverAutomation' Application event log source.
     5. Optionally Authenticode-signs every script with your code-signing certificate, so the task can run
        with -ExecutionPolicy AllSigned (recommended where WDAC / script policies are enforced).
-    6. Registers the scheduled task as SYSTEM (no service account, no stored password).
+    6. Registers the scheduled task as SYSTEM (no service account, no stored password), and adds a
+       Start menu shortcut for the management GUI (Start-DriverAutomationGUI.ps1).
     7. Optionally runs a SYSTEM-context preflight (-RunPreflight), which validates the proxy path, vendor
        catalogs and ConfigMgr permissions exactly as the scheduled task will see them.
 
@@ -38,7 +39,8 @@
     After installation, run Invoke-DriverAutomation.ps1 -PreflightOnly as SYSTEM and show the result.
 
 .PARAMETER Uninstall
-    Remove the scheduled task (program files, data, state and package content are left in place).
+    Remove the scheduled task and the Start menu shortcut (program files, data, state and package
+    content are left in place).
 
 .EXAMPLE
     .\Install-DriverAutomation.ps1 -At 01:30 -RunPreflight
@@ -62,6 +64,7 @@ param (
 )
 
 $ErrorActionPreference = 'Stop'
+$shortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\SCCM Driver Automation.lnk'
 
 function Write-Step ([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 
@@ -71,6 +74,10 @@ if ($Uninstall) {
         Write-Step "Scheduled task '$TaskPath$TaskName' removed. Program files, data root and package content were left in place."
     } else {
         Write-Step 'Scheduled task not found - nothing to remove.'
+    }
+    if (Test-Path -LiteralPath $shortcutPath) {
+        Remove-Item -LiteralPath $shortcutPath -Force
+        Write-Step 'Start menu shortcut removed.'
     }
     return
 }
@@ -82,7 +89,7 @@ if (-not (Test-Path -LiteralPath $InstallPath)) { New-Item -Path $InstallPath -I
 $items = @(
     'Invoke-DriverAutomation.ps1', 'Invoke-DriverRollback.ps1', 'Invoke-DriverPromotion.ps1',
     'Set-DriverDeploymentState.ps1', 'Get-DriverVersionReport.ps1', 'Set-DriverAutomationProxyCredential.ps1',
-    'Install-DriverAutomation.ps1', 'README.md', 'Modules'
+    'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'README.md', 'Modules'
 )
 $samePath = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -eq [System.IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 if (-not $samePath) {
@@ -185,6 +192,21 @@ $task = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principa
 Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -InputObject $task -Force | Out-Null
 Write-SDALog "Scheduled task '$TaskPath$TaskName' registered: $powershell $arguments"
 
+# Start menu shortcut for the management GUI (all users; the GUI asks for elevation itself).
+$guiScript = Join-Path $InstallPath 'Start-DriverAutomationGUI.ps1'
+if (Test-Path -LiteralPath $guiScript) {
+    Write-Step 'Adding Start menu shortcut for the management GUI'
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($shortcutPath)
+    $shortcut.TargetPath = $powershell
+    $shortcut.Arguments = '-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy {0} -File "{1}" -ConfigPath "{2}"' -f $executionPolicy, $guiScript, $installedConfig
+    $shortcut.WorkingDirectory = $InstallPath
+    $shortcut.IconLocation = "$powershell,0"
+    $shortcut.Description = 'Manage SCCM driver automation: versions, rollback, configuration and logs'
+    $shortcut.Save()
+    [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+}
+
 # --- 7. Optional SYSTEM preflight ------------------------------------------------------------------
 if ($RunPreflight) {
     Write-Step 'Running preflight as SYSTEM (this validates proxy, catalogs and ConfigMgr rights as the task will see them)'
@@ -220,5 +242,6 @@ Write-Host ''
 Write-Step 'Installation complete. Next steps:'
 Write-Host ("  - Grant ConfigMgr rights to the computer account {0}\{1}$ (see README 'ConfigMgr permissions')." -f $env:USERDOMAIN, $env:COMPUTERNAME)
 Write-Host ('  - Test without changes:   & "{0}" -DryRun' -f $scriptPath)
+Write-Host  "  - Management GUI:         Start menu > SCCM Driver Automation"
 Write-Host ("  - Run the task now:       Start-ScheduledTask -TaskPath '{0}' -TaskName '{1}'" -f $TaskPath, $TaskName)
 Write-Host ("  - Logs:                   {0}" -f $config.Paths.Logs)
