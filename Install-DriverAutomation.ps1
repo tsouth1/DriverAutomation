@@ -7,7 +7,9 @@
 .DESCRIPTION
     1. Copies the scripts and module to InstallPath and locks the folder down (SYSTEM / Administrators
        full control, Users read & execute). A SYSTEM task must never run code that non-admins can edit.
-    2. Deploys the configuration (an existing installed configuration is kept unless -Force).
+    2. Deploys the configuration. If an installed configuration already exists and differs, you are
+       asked whether to keep it or overwrite it (a backup is kept). -KeepConfig / -Force answer that
+       question in advance; non-interactive sessions keep the existing file.
     3. Creates the data root (logs, state, working folders, secrets) with a SYSTEM / Administrators ACL.
     4. Registers the 'SCCMDriverAutomation' Application event log source.
     5. Optionally Authenticode-signs every script with your code-signing certificate, so the task can run
@@ -38,9 +40,16 @@
 .PARAMETER RunPreflight
     After installation, run Invoke-DriverAutomation.ps1 -PreflightOnly as SYSTEM and show the result.
 
+.PARAMETER KeepConfig
+    Keep an existing installed configuration without asking.
+
+.PARAMETER Force
+    Overwrite an existing installed configuration without asking. The existing file is backed up to
+    Config\DriverAutomation.json.<timestamp>.bak first.
+
 .PARAMETER Uninstall
-    Remove the scheduled task and the Start menu shortcut (program files, data, state and package
-    content are left in place).
+    Remove the scheduled task and the Start menu shortcut only. To remove the program files (and
+    optionally the data), use Uninstall-DriverAutomation.ps1.
 
 .EXAMPLE
     .\Install-DriverAutomation.ps1 -At 01:30 -RunPreflight
@@ -51,36 +60,54 @@
 [CmdletBinding(DefaultParameterSetName = 'Install')]
 param (
     [Parameter(ParameterSetName = 'Install')][string]$InstallPath = (Join-Path $env:ProgramFiles 'SCCMDriverAutomation'),
-    [Parameter(ParameterSetName = 'Install')][string]$ConfigFile = (Join-Path $PSScriptRoot 'Config\DriverAutomation.json'),
+    [Parameter(ParameterSetName = 'Install')][string]$ConfigFile,
     [Parameter(ParameterSetName = 'Install')][ValidatePattern('^\d{2}:\d{2}$')][string]$At = '02:00',
     [Parameter(ParameterSetName = 'Install')][System.DayOfWeek[]]$DaysOfWeek,
     [Parameter(ParameterSetName = 'Install')][string]$SigningCertificateThumbprint,
     [Parameter(ParameterSetName = 'Install')][string]$TimestampServer = 'http://timestamp.digicert.com',
     [Parameter(ParameterSetName = 'Install')][switch]$RunPreflight,
     [Parameter(ParameterSetName = 'Install')][switch]$Force,
+    [Parameter(ParameterSetName = 'Install')][switch]$KeepConfig,
     [Parameter(ParameterSetName = 'Uninstall')][switch]$Uninstall,
     [string]$TaskName = 'SCCM Driver Automation',
     [string]$TaskPath = '\SCCMDriverAutomation\'
 )
 
 $ErrorActionPreference = 'Stop'
+# Set here rather than as a parameter default: $PSScriptRoot can be empty there under powershell.exe -File.
+if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'Config\DriverAutomation.json' }
 $shortcutPath = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\SCCM Driver Automation.lnk'
 
 function Write-Step ([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 
+function Test-InteractiveSession {
+    # False for the SYSTEM task, remote sessions without a console and powershell.exe -NonInteractive.
+    if (-not [Environment]::UserInteractive) { return $false }
+    foreach ($arg in [Environment]::GetCommandLineArgs()) { if ($arg -like '-noni*') { return $false } }
+    return $true
+}
+
+function Get-ConfigSummary ([string]$Path) {
+    # One line describing a configuration file, to help choose between two of them.
+    if (-not (Test-Path -LiteralPath $Path)) { return '(file not found)' }
+    $item = Get-Item -LiteralPath $Path
+    try {
+        $doc = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+        $models = @($doc.Models | Where-Object { $_ })
+        $names = @($models | Select-Object -First 3 | ForEach-Object { '{0} {1}' -f $_.Vendor, $_.Model })
+        $more = if ($models.Count -gt 3) { ", +$($models.Count - 3) more" } else { '' }
+        return 'Modified {0:yyyy-MM-dd HH:mm}; data root {1}; {2} model(s): {3}{4}' -f $item.LastWriteTime, $doc.General.DataRoot, $models.Count, ($names -join ', '), $more
+    } catch {
+        return 'Modified {0:yyyy-MM-dd HH:mm}; not valid JSON ({1})' -f $item.LastWriteTime, $_.Exception.Message
+    }
+}
+
 if ($Uninstall) {
-    if (Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Confirm:$false
-        Write-Step "Scheduled task '$TaskPath$TaskName' removed. Program files, data root and package content were left in place."
-    } else {
-        Write-Step 'Scheduled task not found - nothing to remove.'
-    }
-    if (Test-Path -LiteralPath $shortcutPath) {
-        Remove-Item -LiteralPath $shortcutPath -Force
-        Write-Step 'Start menu shortcut removed.'
-    }
+    # Kept for compatibility: removes the task and shortcut only. Uninstall-DriverAutomation.ps1 removes everything.
+    & (Join-Path $PSScriptRoot 'Uninstall-DriverAutomation.ps1') -TaskName $TaskName -TaskPath $TaskPath -KeepProgramFiles -Confirm:$false
     return
 }
+if ($Force -and $KeepConfig) { throw '-Force and -KeepConfig cannot be used together.' }
 
 # --- 1. Program files ------------------------------------------------------------------------------
 Write-Step "Installing to $InstallPath"
@@ -89,7 +116,7 @@ if (-not (Test-Path -LiteralPath $InstallPath)) { New-Item -Path $InstallPath -I
 $items = @(
     'Invoke-DriverAutomation.ps1', 'Invoke-DriverRollback.ps1', 'Invoke-DriverPromotion.ps1',
     'Set-DriverDeploymentState.ps1', 'Get-DriverVersionReport.ps1', 'Get-DriverCatalogModels.ps1', 'Set-DriverAutomationProxyCredential.ps1',
-    'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'README.md', 'REQUIREMENTS.md', 'INSTRUCTIONS.md', 'Modules'
+    'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'Uninstall-DriverAutomation.ps1', 'README.md', 'REQUIREMENTS.md', 'INSTRUCTIONS.md', 'Modules'
 )
 $samePath = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -eq [System.IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 if (-not $samePath) {
@@ -120,14 +147,48 @@ Set-Acl -LiteralPath $InstallPath -AclObject $acl
 $configDir = Join-Path $InstallPath 'Config'
 $installedConfig = Join-Path $configDir 'DriverAutomation.json'
 if (-not (Test-Path -LiteralPath $configDir)) { New-Item -Path $configDir -ItemType Directory -Force | Out-Null }
-if ((Test-Path -LiteralPath $installedConfig) -and -not $Force) {
-    Write-Step "Keeping existing configuration $installedConfig (use -Force to overwrite)."
-} else {
-    if (-not (Test-Path -LiteralPath $ConfigFile)) { throw "Configuration file not found: $ConfigFile" }
-    if (-not ([System.IO.Path]::GetFullPath($ConfigFile) -eq [System.IO.Path]::GetFullPath($installedConfig))) {
-        Copy-Item -LiteralPath $ConfigFile -Destination $installedConfig -Force
+$sameConfigFile = [System.IO.Path]::GetFullPath($ConfigFile) -eq [System.IO.Path]::GetFullPath($installedConfig)
+
+$deployConfig = $true
+if ((Test-Path -LiteralPath $installedConfig) -and -not $sameConfigFile) {
+    $identical = (Test-Path -LiteralPath $ConfigFile) -and
+        (Get-FileHash -LiteralPath $ConfigFile).Hash -eq (Get-FileHash -LiteralPath $installedConfig).Hash
+    if ($identical) {
+        $deployConfig = $false
+        Write-Step "Existing configuration $installedConfig is identical to $ConfigFile - nothing to change."
+    } elseif ($Force) {
+        Write-Step 'Existing configuration found; -Force was given, so it will be replaced (a backup is kept).'
+    } elseif ($KeepConfig) {
+        $deployConfig = $false
+        Write-Step "Keeping existing configuration $installedConfig (-KeepConfig)."
+    } elseif (-not (Test-InteractiveSession)) {
+        $deployConfig = $false
+        Write-Step "Keeping existing configuration $installedConfig (non-interactive session; use -Force to overwrite)."
+    } else {
+        $existing = Get-ConfigSummary -Path $installedConfig
+        $incoming = Get-ConfigSummary -Path $ConfigFile
+        $message = ("An existing configuration was found:`n  {0}`n  {1}`n`nThe configuration in this installation package is different:`n  {2}`n  {3}`n`n" +
+            "Keep the existing configuration, or overwrite it with the package's? Overwriting saves a backup of the existing file first.") -f `
+            $installedConfig, $existing, $ConfigFile, $incoming
+        $choices = [System.Management.Automation.Host.ChoiceDescription[]]@(
+            (New-Object System.Management.Automation.Host.ChoiceDescription '&Keep', 'Keep the existing configuration (recommended when upgrading).'),
+            (New-Object System.Management.Automation.Host.ChoiceDescription '&Overwrite', "Replace it with $ConfigFile. The existing file is backed up first."))
+        $deployConfig = $Host.UI.PromptForChoice('Existing configuration', $message, $choices, 0) -eq 1
+        if (-not $deployConfig) { Write-Step "Keeping existing configuration $installedConfig." }
     }
+}
+
+if ($deployConfig -and -not $sameConfigFile) {
+    if (-not (Test-Path -LiteralPath $ConfigFile)) { throw "Configuration file not found: $ConfigFile" }
+    if (Test-Path -LiteralPath $installedConfig) {
+        $backup = '{0}.{1:yyyyMMdd-HHmmss}.bak' -f $installedConfig, (Get-Date)
+        Copy-Item -LiteralPath $installedConfig -Destination $backup -Force
+        Write-Step "Existing configuration backed up to $backup"
+    }
+    Copy-Item -LiteralPath $ConfigFile -Destination $installedConfig -Force
     Write-Step "Configuration deployed to $installedConfig"
+} elseif (-not (Test-Path -LiteralPath $installedConfig)) {
+    throw "Configuration file not found: $installedConfig"
 }
 
 Import-Module -Name (Join-Path $InstallPath 'Modules\SCCMDriverAutomation\SCCMDriverAutomation.psd1') -Force -DisableNameChecking

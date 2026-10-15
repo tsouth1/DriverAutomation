@@ -5,6 +5,8 @@ sequence and run it day to day. Check [REQUIREMENTS.md](REQUIREMENTS.md) first; 
 screenshots are in [README.md](README.md).
 
 * [Installation](#installation)
+  * [Upgrading or reinstalling](#upgrading-or-reinstalling)
+  * [Uninstalling](#uninstalling)
   * [Defining models](#defining-models)
 * [Applying the drivers in a task sequence](#applying-the-drivers-in-a-task-sequence)
 * [Day-to-day operations](#day-to-day-operations)
@@ -31,6 +33,51 @@ Start-ScheduledTask -TaskPath '\SCCMDriverAutomation\' -TaskName 'SCCM Driver Au
 scheduled task. It checks the proxy path, catalog signatures, ConfigMgr permissions, DP groups and the
 share mapping exactly as the scheduled task will see them. That is where most first-time problems
 show up: proxy 407 errors for the computer account, missing RBAC, and share permissions.
+
+### Upgrading or reinstalling
+
+Run `Install-DriverAutomation.ps1` again from the new version's folder. The program files and the
+scheduled task are replaced, and the data root (ledgers, logs) is kept as it is.
+
+If an installed configuration already exists and differs from the one being installed, the installer
+shows both files (date, data root, models) and asks:
+
+* **Keep** *(default)*: keep the installed configuration. This is normally what you want when
+  upgrading, because the installed file has your paths and models.
+* **Overwrite**: replace it with the package's configuration. The installed file is first saved as
+  `Config\DriverAutomation.json.<yyyyMMdd-HHmmss>.bak`.
+
+To answer in advance, for example in a script, use `-KeepConfig` or `-Force` (overwrite). A
+non-interactive session (`powershell.exe -NonInteractive`, or no console) keeps the installed file. If
+the two files are identical, nothing is asked.
+
+### Uninstalling
+
+```powershell
+# From an elevated PowerShell (works from the install folder too):
+& 'C:\Program Files\SCCMDriverAutomation\Uninstall-DriverAutomation.ps1'             # shows what it will remove and asks
+& 'C:\Program Files\SCCMDriverAutomation\Uninstall-DriverAutomation.ps1' -WhatIf     # only show it
+& 'C:\Program Files\SCCMDriverAutomation\Uninstall-DriverAutomation.ps1' -RemoveData # also delete logs, ledgers and secrets
+```
+
+| Removed by default | Kept unless `-RemoveData` | Never touched |
+|---|---|---|
+| Scheduled task (and a leftover preflight task), its task folder, the Start menu shortcut, the program folder | The data root folders: `Logs`, `State` (ledgers), `Work`, `Secrets`, plus the `SCCMDriverAutomation` event log source | ConfigMgr packages and the version folders on the package source share |
+
+* Before removing the program folder, the installed configuration is copied to
+  `<DataRoot>\Config-backup\DriverAutomation.<timestamp>.json`. Reinstall with
+  `Install-DriverAutomation.ps1 -ConfigFile <that file>`.
+* Keep the data root if the tool may be reinstalled or moved to another server: the ledgers hold every
+  model's version and rollback history and the PackageIDs. To move, copy `<DataRoot>\State` to the new
+  server before installing there.
+* `-RemoveData` deletes only the folders the tool created. The data root itself is removed only if it
+  is empty afterwards.
+* A running task stops the uninstall; add `-Force` to stop the task first.
+* The packages stay in ConfigMgr because task sequences may still reference them. Delete them in the
+  console (folder `Driver Packages\<Vendor>`), and the version folders on the share, when they are no
+  longer used.
+* `Install-DriverAutomation.ps1 -Uninstall` still works. It removes only the scheduled task and the
+  shortcut, and leaves the program files.
 
 ### Defining models
 

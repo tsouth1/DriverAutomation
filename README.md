@@ -17,7 +17,7 @@ server, or on a separate member server, and does the following:
 | Document | What's in it |
 |---|---|
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Server, disk, package share, ConfigMgr permissions, running from a separate server, proxy, allow-list, TLS inspection, AV / EDR |
-| [INSTRUCTIONS.md](INSTRUCTIONS.md) | Installation, choosing models, applying the packages in a task sequence, the GUI and command line, migrating from DAT |
+| [INSTRUCTIONS.md](INSTRUCTIONS.md) | Installation, upgrading and uninstalling, choosing models, applying the packages in a task sequence, the GUI and command line, migrating from DAT |
 | [ANALYSIS.md](ANALYSIS.md) | Review of the upstream Driver Automation Tool and the reasons for this design |
 
 Quick start: check [REQUIREMENTS.md](REQUIREMENTS.md), run `Install-DriverAutomation.ps1 -RunPreflight`
@@ -109,7 +109,8 @@ The CSV report of each run, colour-coded by status.
 | `Get-DriverCatalogModels.ps1` | Every model and Windows build the vendor catalogs publish packs for, with the exact Model / SystemIds values to configure |
 | `Start-DriverAutomationGUI.ps1` | Management GUI: versions and history, promote / roll back / block / hold, runs, configuration editor, log and report viewer |
 | `Set-DriverAutomationProxyCredential.ps1` | Store a proxy credential (only if computer-account auth is not possible) |
-| `Install-DriverAutomation.ps1` | Install, lock down ACLs, register the event source and the SYSTEM scheduled task, run the preflight |
+| `Install-DriverAutomation.ps1` | Install, lock down ACLs, register the event source and the SYSTEM scheduled task, run the preflight. Asks before replacing an existing configuration |
+| `Uninstall-DriverAutomation.ps1` | Remove the task, shortcut and program files; `-RemoveData` also removes logs, ledgers and secrets. ConfigMgr packages are left alone |
 | `Config\DriverAutomation.json` | All settings and the list of managed models |
 | `REQUIREMENTS.md`, `INSTRUCTIONS.md` | Requirements and permissions; installation and operating instructions |
 | `images\` | Screenshots used in this README |
