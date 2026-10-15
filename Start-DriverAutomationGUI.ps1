@@ -22,7 +22,7 @@
 
     Run it on the site server. The GUI restarts itself elevated when needed, because the scripts
     require it. Promotion, rollback and runs started from the Run tab use your account, so it needs
-    the ConfigMgr rights listed in the README. The scheduled task keeps using the computer account.
+    the ConfigMgr rights listed in REQUIREMENTS.md. The scheduled task keeps using the computer account.
 
 .PARAMETER ConfigPath
     Configuration file to manage. Default: Config\DriverAutomation.json next to this script.
@@ -233,7 +233,7 @@ $script:SettingSpec = @(
     @{ Path = 'ConfigMgr.PilotDistributionPoints'; Type = 'List'; Label = 'Pilot distribution points'; Help = 'Server FQDNs, one per line.' }
     @{ Path = 'ConfigMgr.DistributionPriority'; Type = 'Choice'; Choices = @('High', 'Normal', 'Low'); Label = 'Distribution priority'; Help = '' }
     @{ Path = 'ConfigMgr.EnableBinaryDeltaReplication'; Type = 'Bool'; Label = 'Binary differential replication'; Help = 'Speeds up rollbacks, because older content is usually still on the DPs.' }
-    @{ Path = 'ConfigMgr.AdoptExistingPackages'; Type = 'Bool'; Label = 'Adopt existing packages'; Help = 'Take over a single existing package with the same name instead of stopping. See the README migration section.' }
+    @{ Path = 'ConfigMgr.AdoptExistingPackages'; Type = 'Bool'; Label = 'Adopt existing packages'; Help = 'Take over a single existing package with the same name instead of stopping. See the migration section of INSTRUCTIONS.md.' }
 
     @{ Path = 'Versioning.RetainVersions'; Type = 'Int'; Label = 'Versions to keep on disk'; Help = 'Per model and OS. Minimum 2, so a rollback target always exists.' }
     @{ Path = 'Versioning.PilotRing.Enabled'; Type = 'Bool'; Label = 'Use a Pilot ring'; Help = 'New versions go to the Pilot package first.' }

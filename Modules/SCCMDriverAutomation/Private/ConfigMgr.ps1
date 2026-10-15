@@ -6,7 +6,7 @@
 
     Identity: running as SYSTEM on the site server, the provider sees the computer account
     (DOMAIN\SITESERVER$). That account must be a ConfigMgr administrative user (normally via an AD
-    group) with rights to create/modify packages, move folder items and distribute content. See README.
+    group) with rights to create/modify packages, move folder items and distribute content. See REQUIREMENTS.md.
 
     Package model: one standard package (SMS_Package) per target and ring:
         "<Prefix> - <Vendor> <Model> - <OS> [<Build>] <Arch>"
@@ -70,7 +70,7 @@ function Connect-SDASite {
         Remove-CimSession -CimSession $session -ErrorAction SilentlyContinue
         $who = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         if ($_.Exception.Message -match 'Access is denied|0x80041003|0x80070005') {
-            throw "Access denied to SMS Provider namespace $namespace on '$provider' for '$who'. Add the site server computer account (via an AD group) as a ConfigMgr administrative user - see README 'ConfigMgr permissions'."
+            throw "Access denied to SMS Provider namespace $namespace on '$provider' for '$who'. Add the site server computer account (via an AD group) as a ConfigMgr administrative user - see REQUIREMENTS.md 'ConfigMgr permissions'."
         }
         throw "Unable to query $namespace on '$provider' as '$who': $($_.Exception.Message)"
     }

@@ -89,7 +89,7 @@ if (-not (Test-Path -LiteralPath $InstallPath)) { New-Item -Path $InstallPath -I
 $items = @(
     'Invoke-DriverAutomation.ps1', 'Invoke-DriverRollback.ps1', 'Invoke-DriverPromotion.ps1',
     'Set-DriverDeploymentState.ps1', 'Get-DriverVersionReport.ps1', 'Get-DriverCatalogModels.ps1', 'Set-DriverAutomationProxyCredential.ps1',
-    'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'README.md', 'Modules'
+    'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'README.md', 'REQUIREMENTS.md', 'INSTRUCTIONS.md', 'Modules'
 )
 $samePath = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -eq [System.IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 if (-not $samePath) {
@@ -240,7 +240,7 @@ if ($RunPreflight) {
 
 Write-Host ''
 Write-Step 'Installation complete. Next steps:'
-Write-Host ("  - Grant ConfigMgr rights to the computer account {0}\{1}$ (see README 'ConfigMgr permissions')." -f $env:USERDOMAIN, $env:COMPUTERNAME)
+Write-Host ("  - Grant ConfigMgr rights to the computer account {0}\{1}$ (see REQUIREMENTS.md 'ConfigMgr permissions')." -f $env:USERDOMAIN, $env:COMPUTERNAME)
 Write-Host ('  - Test without changes:   & "{0}" -DryRun' -f $scriptPath)
 Write-Host  "  - Management GUI:         Start menu > SCCM Driver Automation"
 Write-Host ("  - Run the task now:       Start-ScheduledTask -TaskPath '{0}' -TaskName '{1}'" -f $TaskPath, $TaskName)
