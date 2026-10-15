@@ -78,6 +78,28 @@ design differs.
 * **No automatic downgrades.** If a vendor withdraws a release and the catalog points back at an older
   pack, the run logs a warning instead of downgrading.
 
+### What it downloads
+
+The tool downloads the vendors' **enterprise driver packs**, not the latest individual drivers. Each
+run takes the newest pack the catalog lists for a model, OS and build:
+
+| Vendor | Catalog | Packs |
+|---|---|---|
+| Dell | `downloads.dell.com/catalog/DriverPackCatalog.cab` | Dell Command Deploy driver packs |
+| HP | `hpia.hpcloud.hp.com/.../HPClientDriverPackCatalog.cab` | HP Driver Pack SoftPaqs, per platform and Windows build |
+| Lenovo | `download.lenovo.com/cdrt/td/catalogv2.xml` | SCCM driver packs, per model and Windows build |
+
+Vendors rebuild these packs every few months, less often for older models, and some models stop
+getting new packs. Individual drivers (graphics, Wi-Fi, chipset) and BIOS updates are released more
+often, so a pack is usually behind what Dell Command Update, HP Image Assistant or Lenovo System
+Update would install. The packs are still the usual choice for OS deployment: the vendor tests them as
+a set, they hold plain INF drivers that DISM can inject offline, and they are signed and hashed in the
+catalog, which the tool verifies.
+
+Use the packs to give a freshly imaged device working storage, network and base drivers. To keep
+drivers current afterwards, use the vendor update tool, Windows Update for Business driver updates or
+ConfigMgr third-party updates. Individual drivers and BIOS updates are not in scope for this tool.
+
 ---
 
 ## Requirements
