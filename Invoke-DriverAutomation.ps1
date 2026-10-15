@@ -33,7 +33,8 @@
     Report what would change without downloading, changing ConfigMgr or writing ledgers.
 
 .PARAMETER PreflightOnly
-    Validate configuration, folders, proxy / vendor connectivity and ConfigMgr permissions, then exit.
+    Validate configuration, folders and package share rights, proxy / vendor connectivity, ConfigMgr
+    permissions and the site server's read access to the package share, then exit.
 
 .EXAMPLE
     .\Invoke-DriverAutomation.ps1 -DryRun
@@ -91,12 +92,27 @@ try {
             $found = Invoke-SDAWql -Context $context -Query "SELECT GroupID FROM SMS_DistributionPointGroup WHERE Name = '$(ConvertTo-SDAWqlString $group)'"
             if (@($found).Count -eq 0) { throw "Distribution point group '$group' was not found." }
         }
+        [void](Test-SDASourceReadAccess -Context $context -Config $config)
         Write-SDALog '===== Preflight completed successfully ====='
         Write-SDAEvent -EventId 1000 -Message "Preflight completed successfully as $(Get-SDAInitiator)."
         exit 0
     }
 
-    if (-not $DryRun) { $context = Connect-SDASite -Config $config }
+    if (-not $DryRun) {
+        $context = Connect-SDASite -Config $config
+        [void](Test-SDASourceReadAccess -Context $context -Config $config)
+    } else {
+        # Read-only: look up the site server so a dry run also reports whether it can read the share.
+        $checkContext = $null
+        try {
+            $checkContext = Connect-SDASite -Config $config
+            [void](Test-SDASourceReadAccess -Context $checkContext -Config $config)
+        } catch {
+            Write-SDALog "Site server read access to the package share was not checked: $($_.Exception.Message)" -Severity Warning
+        } finally {
+            Disconnect-SDASite -Context $checkContext
+        }
+    }
 
     $results = New-Object System.Collections.Generic.List[object]
     foreach ($target in $targets) {

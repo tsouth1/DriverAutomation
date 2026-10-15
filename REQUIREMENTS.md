@@ -39,6 +39,34 @@ detected automatically, and the package source share and ConfigMgr access are us
     directly. WIMs are captured under `DataRoot` first and then copied across. The preflight checks
     the share is reachable and writable.
 
+### What the checks verify
+
+Preflight, dry runs and full runs check the package share before doing anything else:
+
+| Check | Account checked | Result |
+|---|---|---|
+| Share reachable; package folder exists or can be created | The account running the check | Stops the run |
+| Write and delete a test file | The account running the check | Stops the run |
+| Create nested folders, rename a folder, delete it (what staging and retention do) | The account running the check | Stops the run |
+| Free space against `MinimumFreeSpaceGB` | n/a | Stops the run |
+| The **site server's** computer account can read the folder (NTFS permissions) and the share (share permissions) | The site server, looked up in ConfigMgr and AD | Warning only |
+
+* **Which account runs the check.** From the GUI or a console, the first three checks run as
+  **you**. Only `Install-DriverAutomation.ps1 -RunPreflight` runs them as SYSTEM (the computer account),
+  exactly as the scheduled task does. Use that after changing share permissions.
+* **The site server check**
+  * **How it works.** It finds the site server in ConfigMgr and its groups in Active Directory
+    (including nested groups), then compares them with the folder's and the share's permissions.
+  * **Groups it always counts.** Everyone, Authenticated Users and the file server's local Users group,
+    because every computer account is in them.
+  * **Local Administrators.** Access only through the file server's local Administrators group is
+    reported as a warning, because membership there can't be seen from here.
+  * **When it can't run.** Reading share permissions needs admin rights on the file server; without
+    them, only the NTFS permissions are checked and the log says so. If ConfigMgr or AD can't be
+    reached, the check is skipped with a warning.
+  * **It never stops a run.** Look for these lines in the log: a site server that can't read the share
+    makes distribution fail later.
+
 ## Running from a separate server
 
 Everything above, plus:
@@ -53,7 +81,8 @@ Everything above, plus:
   package source share and folder.
 * **Site server read access.** When the share is not on the site server, give the site server's
   computer account **Read** on the share and folder, so it can copy the content to distribution
-  points.
+  points. The preflight and every run warn when it can't (see
+  [What the checks verify](#what-the-checks-verify)).
 * **Proxy.** Allow this server's computer account through the proxy. A stored proxy credential only
   works on the server where it was saved, so run `Set-DriverAutomationProxyCredential.ps1` there.
 * **One server only.** The lock that stops runs from overlapping is per server, and the ledgers live
