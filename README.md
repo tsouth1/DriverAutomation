@@ -1,7 +1,7 @@
 # SCCMDriverAutomation
 
 Driver pack automation for Configuration Manager. It runs unattended as **SYSTEM** on the site
-server and does the following:
+server, or on a separate member server, and does the following:
 
 * Reads the official Dell, HP and Lenovo driver pack catalogs.
 * Downloads new releases through your proxy.
@@ -45,7 +45,7 @@ design differs.
  Download (proxy, resume, retry) → vendor hash + Authenticode → Defender scan
           → extract → INF check → DISM WIM capture → DriverManifest.json
           ▼
- <PackageSourceLocalRoot>\<Vendor>\<Model>\<OS Build Arch>\<VersionId>\   (immutable)
+ <package source share>\<Vendor>\<Model>\<OS Build Arch>\<VersionId>\   (immutable)
           ▼
  Entry ring package (Pilot if enabled, else Production)
    create once, afterwards only PkgSourcePath is re-pointed + RefreshPkgSource
@@ -82,28 +82,62 @@ design differs.
 
 ## Requirements
 
-* Windows Server 2016 or later on the **site server** (primary or CAS), with Windows PowerShell 5.1.
-  `dism.exe`, `expand.exe` and `robocopy.exe` are built in.
-* A package source share. Set `PackageSourceUncRoot` to its UNC path.
-  * Share on the server running the tool: also set `PackageSourceLocalRoot` to the local path of the
-    same folder. The preflight proves they match.
-  * Share on another server (a file server, or the site server when the tool runs elsewhere): leave
-    `PackageSourceLocalRoot` blank. Content is written to the share directly; WIMs are captured under
-    `DataRoot` first and copied across. The preflight checks the share is writable. The site server's
-    computer account needs Read on that share so it can distribute the content.
-* Running on a server other than the site server: set `ConfigMgr.SiteCode` and
-  `ConfigMgr.ProviderMachine` (auto-detection only works on the SMS Provider), and use that server's
-  computer account wherever this README says site server computer account.
-* Disk space: driver packs are 1–3 GB each, plus the WIM. Size `MinimumFreeSpaceGB` accordingly.
-* Outbound HTTPS to the vendor domains (see [Network](#network-proxy-and-security-tooling)).
-* ConfigMgr rights for the site server **computer account** (see next section).
+The tool can run on the **site server** (primary or CAS) or on a **separate member server**, such as a
+management or file server. The site server is the simplest choice: the site and the SMS Provider are
+detected automatically, and the package source share and ConfigMgr access are usually in place already.
+
+### Every server
+
+* Windows Server 2016 or later, domain-joined, with Windows PowerShell 5.1. `dism.exe`, `expand.exe`
+  and `robocopy.exe` are built in.
+* `General.DataRoot` on a local fixed drive of the server running the tool. Downloads, extraction,
+  WIM capture, ledgers and logs live there.
+* Disk space: driver packs are 1–3 GB each, plus the WIM. Size `MinimumFreeSpaceGB` accordingly. It is
+  checked on the data root and on the package source, including when that is a remote share.
+* Outbound HTTPS to the vendor domains for the running server's computer account
+  (see [Network](#network-proxy-and-security-tooling)).
+* ConfigMgr rights for the running server's **computer account** (see
+  [ConfigMgr permissions](#configmgr-permissions)).
+* A package source share. Set `ConfigMgr.PackageSourceUncRoot` to its UNC path. ConfigMgr packages
+  point there, so the site server must be able to read it. Then either:
+  * **Share on the server running the tool:** set `PackageSourceLocalRoot` to the local path of the
+    same folder. The preflight writes a test file locally and checks it is visible through the UNC
+    path.
+  * **Share on another server:** leave `PackageSourceLocalRoot` blank. Content is written to the share
+    directly. WIMs are captured under `DataRoot` first and then copied across. The preflight checks
+    the share is reachable and writable.
+
+### Running from a separate server
+
+Everything above, plus:
+
+* **Site connection.** Set `ConfigMgr.SiteCode` (e.g. `PS1`) and `ConfigMgr.ProviderMachine` (the SMS
+  Provider's FQDN). They are only detected automatically on a server that hosts the SMS Provider.
+* **Network to the SMS Provider.** With `CimProtocol` = `Dcom` (default), allow TCP 135 and the dynamic
+  RPC ports from this server to the SMS Provider. With `Wsman`, allow TCP 5985 and make sure WinRM is
+  enabled on the SMS Provider.
+* **Computer account.** Wherever this README says computer account, use this server's account
+  (`DOMAIN\SERVER$`), not the site server's. It needs the ConfigMgr role below and **Modify** on the
+  package source share and folder.
+* **Site server read access.** When the share is not on the site server, give the site server's
+  computer account **Read** on the share and folder, so it can copy the content to distribution
+  points.
+* **Proxy.** Allow this server's computer account through the proxy. A stored proxy credential only
+  works on the server where it was saved, so run `Set-DriverAutomationProxyCredential.ps1` there.
+* **One server only.** The lock that stops runs from overlapping is per server, and the ledgers live
+  in that server's `DataRoot`. Never run the scheduled task on two servers against the same packages.
+  When moving an existing installation, disable the old task and copy `<DataRoot>\State` to the new
+  server.
+* The rollback, promotion, block and hold scripts and the GUI read the local ledgers, so run them on
+  this server.
 
 ### ConfigMgr permissions
 
-The task runs as SYSTEM, so it reaches the SMS Provider as `DOMAIN\SITESERVER$`. No user or service
-account is involved. One-time setup:
+The task runs as SYSTEM, so it reaches the SMS Provider as the running server's computer account
+(`DOMAIN\SERVER$`). No user or service account is involved. One-time setup:
 
-1. Create an AD group, e.g. `SCCM-DriverAutomation`, and add the site server computer account to it.
+1. Create an AD group, e.g. `SCCM-DriverAutomation`, and add the running server's computer account to
+   it.
 2. In the console, go to **Administration → Security → Administrative Users → Add User or Group**.
    Add the group with a security role that covers the following, scoped to the security scope your
    driver packages use (e.g. *Default*):
@@ -117,10 +151,10 @@ account is involved. One-time setup:
 3. Refresh the computer account's Kerberos ticket so it picks up the new group: reboot, or run
    `klist -li 0x3e7 purge` from an elevated prompt.
 4. Give the computer account **Modify** on the package source folder (share and NTFS). This is usually
-   already in place on a site server, but not on a separate file server.
+   already in place when the tool runs on the site server and the share is local to it.
 
 Administrators who run the rollback and promotion scripts use their own ConfigMgr rights. Those
-scripts must be run elevated on the site server.
+scripts must be run elevated on the server where the tool is installed.
 
 ---
 
@@ -128,7 +162,7 @@ scripts must be run elevated on the site server.
 
 ```powershell
 # 1. Edit Config\DriverAutomation.json (paths, DP groups, proxy, models - see below)
-# 2. From an elevated PowerShell on the site server:
+# 2. From an elevated PowerShell on the server that will run it:
 .\Install-DriverAutomation.ps1 -At 02:00 -RunPreflight
 #    optional: -DaysOfWeek Tuesday,Thursday   -SigningCertificateThumbprint <thumbprint>
 # 3. See what the first run would do, without making changes:
