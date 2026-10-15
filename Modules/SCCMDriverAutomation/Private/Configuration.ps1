@@ -89,6 +89,8 @@ function Get-SDADefaultConfig {
             ConsoleFolder                = 'Driver Packages'   # created as <ConsoleFolder>\<Vendor>
             DistributionPointGroups      = @()
             DistributionPoints           = @()
+            PilotDistributionPointGroups = @()                 # Pilot packages only; both Pilot lists empty = same as above
+            PilotDistributionPoints      = @()
             DistributionPriority         = 'Normal'            # High | Normal | Low
             EnableBinaryDeltaReplication = $true
             AdoptExistingPackages        = $false              # adopt a single pre-existing package with the same name

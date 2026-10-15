@@ -87,7 +87,7 @@ try {
             Write-SDALog "[$v] Catalog download and verification OK."
         }
         $context = Connect-SDASite -Config $config
-        foreach ($group in @($config.ConfigMgr.DistributionPointGroups | Where-Object { $_ })) {
+        foreach ($group in @(@($config.ConfigMgr.DistributionPointGroups) + @($config.ConfigMgr.PilotDistributionPointGroups) | Where-Object { $_ } | Select-Object -Unique)) {
             $found = Invoke-SDAWql -Context $context -Query "SELECT GroupID FROM SMS_DistributionPointGroup WHERE Name = '$(ConvertTo-SDAWqlString $group)'"
             if (@($found).Count -eq 0) { throw "Distribution point group '$group' was not found." }
         }

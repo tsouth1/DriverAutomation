@@ -20,6 +20,8 @@
     "ConsoleFolder": "Driver Packages",
     "DistributionPointGroups": [ "All Distribution Points" ],
     "DistributionPoints": [],
+    "PilotDistributionPointGroups": [],
+    "PilotDistributionPoints": [],
     "DistributionPriority": "Normal",
     "EnableBinaryDeltaReplication": true,
     "AdoptExistingPackages": false

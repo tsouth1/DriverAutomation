@@ -123,7 +123,7 @@ function Publish-SDAVersion {
     if ($packageId) {
         Set-SDAPackageSource -Context $Context -PackageID $packageId -SourcePath $record.StagedUnc -Version $versionLabel -Description $description
     } else {
-        $packageId = New-SDAPackage -Context $Context -Config $Config -Target $Target -Name $name -SourcePath $record.StagedUnc -Version $versionLabel -Description $description
+        $packageId = New-SDAPackage -Context $Context -Config $Config -Target $Target -Name $name -SourcePath $record.StagedUnc -Version $versionLabel -Description $description -Ring $Ring
     }
 
     $State.Packages[$Ring] = [ordered]@{ PackageID = $packageId; Name = $name }

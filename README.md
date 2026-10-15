@@ -62,6 +62,16 @@ design differs.
   * Production package: `Drivers - Dell Latitude 7440 - Windows 11 x64`
   * Pilot package: `Drivers Pilot - Dell Latitude 7440 - Windows 11 x64`. MDM excludes names
     containing *Pilot* in Production mode and uses them in Pilot mode.
+* **Disk space.** Both packages point at the same version folders, so each version is stored once on
+  the package source share. On the site server and the DPs, ConfigMgr's content library stores
+  identical files once, so a Pilot package on the same version as Production adds almost nothing.
+  Extra space is used only while a newer version is in Pilot, because the DPs hold both versions.
+* **Where Pilot content goes.** By default Pilot packages go to the same DP groups and DPs as
+  Production. To keep Pilot content off most DPs, set `ConfigMgr.PilotDistributionPointGroups` and/or
+  `PilotDistributionPoints` (**Configuration > Settings > Pilot DP groups** in the GUI). When either is
+  set, Pilot packages go only to those. Pilot devices must then be in boundary groups that can reach
+  those DPs, or the task sequence can't download the Pilot package. The setting applies when a Pilot
+  package is created. For existing Pilot packages, remove them from the other DPs in the console.
 * **Version folders are immutable.** They are built in a temporary folder and renamed into place, so
   every retained version is an exact, re-deployable copy. The `DriverManifest.json` inside each folder
   records the source URL, hashes, signer, INF count and who staged it.

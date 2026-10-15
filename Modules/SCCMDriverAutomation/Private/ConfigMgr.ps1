@@ -194,10 +194,34 @@ function Move-SDAPackageToFolder {
     }
 }
 
+function Get-SDADistributionTargets {
+    <#
+    .SYNOPSIS
+        DP groups and individual DPs for a ring. Pilot uses its own lists when either is set, otherwise
+        the Production lists.
+    #>
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Config,
+        [ValidateSet('Production', 'Pilot')][string]$Ring = 'Production'
+    )
+
+    $cm = $Config.ConfigMgr
+    $pilotGroups = @($cm.PilotDistributionPointGroups | Where-Object { $_ })
+    $pilotPoints = @($cm.PilotDistributionPoints | Where-Object { $_ })
+    if ($Ring -eq 'Pilot' -and ($pilotGroups.Count -gt 0 -or $pilotPoints.Count -gt 0)) {
+        return [pscustomobject]@{ Groups = $pilotGroups; Points = $pilotPoints }
+    }
+    return [pscustomobject]@{
+        Groups = @($cm.DistributionPointGroups | Where-Object { $_ })
+        Points = @($cm.DistributionPoints | Where-Object { $_ })
+    }
+}
+
 function Start-SDAContentDistribution {
     <#
     .SYNOPSIS
-        Targets a newly created package to the configured DP groups and individual DPs.
+        Targets a newly created package to the ring's DP groups and individual DPs.
     .OUTPUTS
         Number of distribution targets that failed.
     #>
@@ -205,11 +229,13 @@ function Start-SDAContentDistribution {
     param (
         [Parameter(Mandatory)]$Context,
         [Parameter(Mandatory)][System.Collections.IDictionary]$Config,
-        [Parameter(Mandatory)][string]$PackageID
+        [Parameter(Mandatory)][string]$PackageID,
+        [ValidateSet('Production', 'Pilot')][string]$Ring = 'Production'
     )
 
+    $targets = Get-SDADistributionTargets -Config $Config -Ring $Ring
     $failures = 0
-    foreach ($groupName in @($Config.ConfigMgr.DistributionPointGroups | Where-Object { $_ })) {
+    foreach ($groupName in $targets.Groups) {
         try {
             $group = Invoke-SDAWql -Context $Context -Query "SELECT * FROM SMS_DistributionPointGroup WHERE Name = '$(ConvertTo-SDAWqlString $groupName)'" | Select-Object -First 1
             if (-not $group) { throw 'group not found' }
@@ -222,7 +248,7 @@ function Start-SDAContentDistribution {
         }
     }
 
-    foreach ($dpName in @($Config.ConfigMgr.DistributionPoints | Where-Object { $_ })) {
+    foreach ($dpName in $targets.Points) {
         try {
             $safe = ConvertTo-SDAWqlString $dpName
             $dp = Invoke-SDAWql -Context $Context -Query "SELECT * FROM SMS_DistributionPointInfo WHERE ServerName = '$safe' OR ServerName LIKE '$safe.%'" | Select-Object -First 1
@@ -259,7 +285,8 @@ function New-SDAPackage {
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$SourcePath,
         [Parameter(Mandatory)][string]$Version,
-        [Parameter(Mandatory)][string]$Description
+        [Parameter(Mandatory)][string]$Description,
+        [ValidateSet('Production', 'Pilot')][string]$Ring = 'Production'
     )
 
     $priority = switch ($Config.ConfigMgr.DistributionPriority) { 'High' { 1 } 'Low' { 3 } default { 2 } }
@@ -296,7 +323,7 @@ function New-SDAPackage {
     }
 
     Move-SDAPackageToFolder -Context $Context -PackageID $packageId -FolderPath (Join-Path $Config.ConfigMgr.ConsoleFolder $Target.Vendor)
-    $failed = Start-SDAContentDistribution -Context $Context -Config $Config -PackageID $packageId
+    $failed = Start-SDAContentDistribution -Context $Context -Config $Config -PackageID $packageId -Ring $Ring
     if ($failed -gt 0) { Write-SDALog "$failed distribution target(s) failed for $packageId - distribute manually or fix and re-run." -Severity Warning -Component 'ConfigMgr' }
     return $packageId
 }

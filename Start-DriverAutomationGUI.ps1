@@ -229,6 +229,8 @@ $script:SettingSpec = @(
     @{ Path = 'ConfigMgr.ConsoleFolder'; Type = 'Text'; Label = 'Console folder'; Help = 'Packages are placed in <folder>\<Vendor>.' }
     @{ Path = 'ConfigMgr.DistributionPointGroups'; Type = 'List'; Label = 'Distribution point groups'; Help = 'One per line.' }
     @{ Path = 'ConfigMgr.DistributionPoints'; Type = 'List'; Label = 'Distribution points'; Help = 'Server FQDNs, one per line.' }
+    @{ Path = 'ConfigMgr.PilotDistributionPointGroups'; Type = 'List'; Label = 'Pilot DP groups'; Help = 'Pilot packages go only to these groups and the Pilot DPs below. Leave both empty to use the lists above. Applies to Pilot packages created from now on.' }
+    @{ Path = 'ConfigMgr.PilotDistributionPoints'; Type = 'List'; Label = 'Pilot distribution points'; Help = 'Server FQDNs, one per line.' }
     @{ Path = 'ConfigMgr.DistributionPriority'; Type = 'Choice'; Choices = @('High', 'Normal', 'Low'); Label = 'Distribution priority'; Help = '' }
     @{ Path = 'ConfigMgr.EnableBinaryDeltaReplication'; Type = 'Bool'; Label = 'Binary differential replication'; Help = 'Speeds up rollbacks, because older content is usually still on the DPs.' }
     @{ Path = 'ConfigMgr.AdoptExistingPackages'; Type = 'Bool'; Label = 'Adopt existing packages'; Help = 'Take over a single existing package with the same name instead of stopping. See the README migration section.' }
