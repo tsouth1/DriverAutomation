@@ -24,11 +24,12 @@ design differs.
 | `Invoke-DriverPromotion.ps1` | Promote Pilot (or a specific version) to Production |
 | `Set-DriverDeploymentState.ps1` | Block / unblock versions, hold / release rings (ledger only) |
 | `Get-DriverVersionReport.ps1` | What is deployed where, rollback targets, history, DP status |
+| `Get-DriverCatalogModels.ps1` | Every model and Windows build the vendor catalogs publish packs for, with the exact Model / SystemIds values to configure |
 | `Start-DriverAutomationGUI.ps1` | Management GUI: versions and history, promote / roll back / block / hold, runs, configuration editor, log and report viewer |
 | `Set-DriverAutomationProxyCredential.ps1` | Store a proxy credential (only if computer-account auth is not possible) |
 | `Install-DriverAutomation.ps1` | Install, lock down ACLs, register the event source and the SYSTEM scheduled task, run the preflight |
 | `Config\DriverAutomation.json` | All settings and the list of managed models |
-| `Modules\SCCMDriverAutomation\` | The module: Logging, Configuration, VersionStore, Network, Catalog, Vendor{Dell,HP,Lenovo}, Staging, ConfigMgr, Deployment, Session |
+| `Modules\SCCMDriverAutomation\` | The module: Logging, Configuration, VersionStore, Network, Catalog, CatalogBrowse, Vendor{Dell,HP,Lenovo}, Staging, ConfigMgr, Deployment, Session |
 
 ---
 
@@ -135,6 +136,20 @@ show up: proxy 407 errors for the computer account, missing RBAC, and share perm
 
 ### Defining models
 
+The easiest way is **Configuration > Add from vendor catalog** in the GUI: scan the catalogs, search
+for a model or system ID, tick the models and the Windows builds you want, then click **Add ticked
+models to the configuration**. Names and system IDs are copied from the catalog, so they always
+match. A model that shares a system ID with one you already have (HP often ships one pack for a whole
+platform, such as all G10 models on `8B41`) is added to that existing entry instead of creating a
+second package for the same hardware. From the command line:
+
+```powershell
+.\Get-DriverCatalogModels.ps1 -Vendor Lenovo | Where-Object Model -like 'ThinkPad T14*' | Format-Table
+.\Get-DriverCatalogModels.ps1 -Vendor HP | Where-Object { $_.SystemIds -contains '8B41' }
+```
+
+To write entries by hand:
+
 ```json
 { "Vendor": "Dell",   "Model": "Latitude 7440",      "SystemIds": ["0C0B","0C0C","0C0D"],
   "OperatingSystems": [ { "Name": "Windows 11", "Architecture": "x64" } ] },
@@ -171,7 +186,7 @@ require it.
 |---|---|
 | Models & versions | Each model / OS with its Production and Pilot version, package IDs, latest catalog release, rollback target and holds. Select one to see its staged versions and audit history. Buttons: Promote, Roll back, Block / Unblock version, Hold / Release ring. Each asks for a reason. |
 | Run | Preflight, dry run or full run for selected vendors and models, as you. Shows the scheduled task's state, last result and next run, and can start it (as SYSTEM). |
-| Configuration | Models grid with their operating systems, plus a form for every other setting. Save validates with the same rules as the scripts and warns when a path's drive doesn't exist on this server. The previous file is kept as `DriverAutomation.json.bak`. |
+| Configuration | Models grid with their operating systems, plus a form for every other setting. **Add from vendor catalog** lists every model and build the vendors publish packs for, filterable by name, system ID, OS, build and release date, and adds the ticked ones. Save validates with the same rules as the scripts and warns when a path's drive doesn't exist on this server. The previous file is kept as `DriverAutomation.json.bak`. |
 | Logs | CMTrace log viewer with filter, warnings-only and auto-refresh. Opens the log in CMTrace when it is installed. |
 | Run reports | The CSV report of each run, colour-coded by status. |
 
@@ -343,6 +358,9 @@ Verified on Windows PowerShell 5.1:
 * Rollback candidate selection, block and hold
 * Retention
 * The full per-target pipeline in `-DryRun`, including Pilot auto-promotion
+* Catalog browsing: every Lenovo row and a 450-row sample across all vendors resolve to the same pack
+  with the deployment resolvers, apart from a handful of retired builds where two catalog entries list
+  the same hardware and the runtime takes the newest of them
 
 **Not yet exercised against a live site:**
 * The ConfigMgr writes: package create / re-point / distribute and folder moves

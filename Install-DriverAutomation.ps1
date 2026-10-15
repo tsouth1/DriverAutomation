@@ -88,7 +88,7 @@ if (-not (Test-Path -LiteralPath $InstallPath)) { New-Item -Path $InstallPath -I
 
 $items = @(
     'Invoke-DriverAutomation.ps1', 'Invoke-DriverRollback.ps1', 'Invoke-DriverPromotion.ps1',
-    'Set-DriverDeploymentState.ps1', 'Get-DriverVersionReport.ps1', 'Set-DriverAutomationProxyCredential.ps1',
+    'Set-DriverDeploymentState.ps1', 'Get-DriverVersionReport.ps1', 'Get-DriverCatalogModels.ps1', 'Set-DriverAutomationProxyCredential.ps1',
     'Start-DriverAutomationGUI.ps1', 'Install-DriverAutomation.ps1', 'README.md', 'Modules'
 )
 $samePath = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') -eq [System.IO.Path]::GetFullPath($InstallPath).TrimEnd('\')

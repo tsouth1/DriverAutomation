@@ -10,6 +10,7 @@
         VendorDell.ps1     Dell DriverPackCatalog parsing
         VendorHP.ps1       HP Client Driver Pack catalog parsing
         VendorLenovo.ps1   Lenovo catalogv2 parsing
+        CatalogBrowse.ps1  Lists every model / OS in a catalog, for picking models
         Staging.ps1        Extraction, validation, WIM / raw content build, retention
         ConfigMgr.ps1      SMS Provider (WMI/CIM) package operations
         Deployment.ps1     Orchestration: per-model update pipeline, publish, rollback

@@ -12,6 +12,8 @@
                          Set-DriverDeploymentState.ps1.
       Run                Preflight, dry run or full run as you, or start the SYSTEM scheduled task.
       Configuration      Edit Config\DriverAutomation.json. Changes are validated before saving.
+                         Models can be picked from the vendor catalogs (Get-DriverCatalogModels.ps1)
+                         instead of typed in.
       Logs, Run reports  CMTrace log viewer and the CSV report of each run.
 
     Every action runs the script in a separate Windows PowerShell process, exactly as you would from
@@ -90,6 +92,102 @@ namespace SDAGui {
 '@
 }
 
+# Rows for the "Add from vendor catalog" tab. The selection rules live here so ticking a model picks
+# an OS for it, and unticking its last OS unticks the model, without a PowerShell handler per row.
+if (-not ('SDAGui.CatalogModel' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+namespace SDAGui {
+    public class CatalogItem : INotifyPropertyChanged {
+        public event PropertyChangedEventHandler PropertyChanged;
+        protected void Raise(string name) {
+            PropertyChangedEventHandler handler = PropertyChanged;
+            if (handler != null) { handler(this, new PropertyChangedEventArgs(name)); }
+        }
+    }
+    public class CatalogOs : CatalogItem {
+        private bool selected;
+        private bool inConfig;
+        public CatalogModel Parent { get; set; }
+        public string Name { get; set; }
+        public string Build { get; set; }
+        public string Architecture { get; set; }
+        public string Version { get; set; }
+        public string Released { get; set; }
+        public bool InConfig {
+            get { return inConfig; }
+            set { if (inConfig != value) { inConfig = value; Raise("InConfig"); Raise("InConfigText"); } }
+        }
+        public string InConfigText { get { return inConfig ? "Yes" : ""; } }
+        public bool Selected {
+            get { return selected; }
+            set {
+                if (selected == value) { return; }
+                selected = value;
+                Raise("Selected");
+                if (Parent == null) { return; }
+                if (value) { Parent.Selected = true; }
+                else if (!Parent.HasSelectedOs()) { Parent.Selected = false; }
+            }
+        }
+    }
+    public class CatalogModel : CatalogItem {
+        public static int SelectedCount;
+        public static string PreferredOs = "Windows 11";
+        public static string PreferredBuild = "";
+        private bool selected;
+        private string inConfig = "";
+        public string Vendor { get; set; }
+        public string Model { get; set; }
+        public string SystemIds { get; set; }
+        public string[] SystemIdList { get; set; }
+        public string OsSummary { get; set; }
+        public string Released { get; set; }
+        public string SearchText { get; set; }
+        public List<CatalogOs> OperatingSystems { get; private set; }
+        public CatalogModel() { OperatingSystems = new List<CatalogOs>(); SystemIdList = new string[0]; Released = ""; }
+        public string InConfig {
+            get { return inConfig; }
+            set { string v = value ?? ""; if (inConfig != v) { inConfig = v; Raise("InConfig"); } }
+        }
+        public bool HasSelectedOs() {
+            foreach (CatalogOs os in OperatingSystems) { if (os.Selected) { return true; } }
+            return false;
+        }
+        public bool Selected {
+            get { return selected; }
+            set {
+                if (selected == value) { return; }
+                selected = value;
+                SelectedCount += value ? 1 : -1;
+                Raise("Selected");
+                if (value) {
+                    if (!HasSelectedOs()) { SelectDefaultOs(); }
+                } else {
+                    foreach (CatalogOs os in OperatingSystems) { os.Selected = false; }
+                }
+            }
+        }
+        // The newest build of the preferred OS (x64 if there is one), else the newest OS the model has.
+        // OperatingSystems is sorted newest first.
+        private void SelectDefaultOs() {
+            CatalogOs pick = null;
+            foreach (CatalogOs os in OperatingSystems) {
+                if (!string.Equals(os.Name, PreferredOs, StringComparison.OrdinalIgnoreCase)) { continue; }
+                if (!string.IsNullOrEmpty(PreferredBuild) && !string.IsNullOrEmpty(os.Build) &&
+                    !string.Equals(os.Build, PreferredBuild, StringComparison.OrdinalIgnoreCase)) { continue; }
+                if (pick == null || (pick.Architecture != "x64" && os.Architecture == "x64")) { pick = os; }
+            }
+            if (pick == null && OperatingSystems.Count > 0) { pick = OperatingSystems[0]; }
+            if (pick != null) { pick.Selected = true; }
+        }
+    }
+}
+'@
+}
+
 #region State
 $script:AppRoot        = $PSScriptRoot           # folder holding the product scripts
 $script:ConfigPath     = $ConfigPath
@@ -106,6 +204,8 @@ $script:SettingControls = @{}
 $script:Job            = $null    # the script process currently running, if any
 $script:TickCount      = 0
 $script:SuppressEvents = $false
+$script:CatalogModels  = $null    # SDAGui.CatalogModel rows from the last catalog scan
+$script:CatalogFile    = Join-Path $script:OutputDir 'CatalogModels.json'
 #endregion State
 
 #region Settings form definition
@@ -370,8 +470,8 @@ $mainXaml = @'
               <Button x:Name="ReloadConfigButton" Content="Discard changes"/>
               <Button x:Name="NotepadConfigButton" Content="Open in Notepad"/>
             </WrapPanel>
-            <TabControl>
-              <TabItem Header="Models">
+            <TabControl x:Name="ConfigTabs">
+              <TabItem x:Name="ConfigModelsTab" Header="Models">
                 <Grid Margin="6">
                   <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -380,6 +480,7 @@ $mainXaml = @'
                     <RowDefinition Height="150"/>
                   </Grid.RowDefinitions>
                   <DockPanel Margin="0,0,0,6">
+                    <Button x:Name="BrowseCatalogButton" Content="Add from vendor catalog..."/>
                     <Button x:Name="AddModelButton" Content="Add model"/>
                     <Button x:Name="RemoveModelButton" Content="Remove model"/>
                     <TextBlock Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="8,0,0,0"
@@ -419,6 +520,88 @@ $mainXaml = @'
                       </DataGridComboBoxColumn>
                     </DataGrid.Columns>
                   </DataGrid>
+                </Grid>
+              </TabItem>
+              <TabItem x:Name="CatalogTab" Header="Add from vendor catalog">
+                <Grid Margin="6">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*" MinHeight="100"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="140"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <WrapPanel Margin="0,0,0,6">
+                    <TextBlock Text="Catalogs" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <CheckBox x:Name="CatalogDell" Content="Dell" IsChecked="True" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <CheckBox x:Name="CatalogHP" Content="HP" IsChecked="True" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <CheckBox x:Name="CatalogLenovo" Content="Lenovo" IsChecked="True" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <Button x:Name="CatalogScanButton" Content="Scan catalogs"/>
+                    <TextBlock x:Name="CatalogInfoText" Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                  </WrapPanel>
+                  <WrapPanel Grid.Row="1" Margin="0,0,0,6">
+                    <TextBlock Text="Search" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox x:Name="CatalogSearch" Width="220" Margin="0,0,12,0" VerticalContentAlignment="Center"
+                             ToolTip="Model name or system ID. With several words, all must match (e.g. 'latitude 7440' or '21HD')."/>
+                    <TextBlock Text="Vendor" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox x:Name="CatalogVendorFilter" Width="80" Margin="0,0,12,0"/>
+                    <TextBlock Text="OS" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox x:Name="CatalogOsFilter" Width="100" Margin="0,0,12,0"/>
+                    <TextBlock Text="Build" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox x:Name="CatalogBuildFilter" Width="70" Margin="0,0,12,0"/>
+                    <TextBlock Text="Pack released" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox x:Name="CatalogAgeFilter" Width="110" Margin="0,0,12,0"/>
+                    <CheckBox x:Name="CatalogHideConfigured" Content="Hide configured models" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <CheckBox x:Name="CatalogSelectedOnly" Content="Ticked only" VerticalAlignment="Center"/>
+                  </WrapPanel>
+                  <DataGrid x:Name="CatalogGrid" Grid.Row="2">
+                    <DataGrid.RowStyle>
+                      <Style TargetType="DataGridRow">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding Selected}" Value="True"><Setter Property="Background" Value="#FFE2ECF7"/></DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </DataGrid.RowStyle>
+                    <DataGrid.Columns>
+                      <DataGridTemplateColumn Header="Add" SortMemberPath="Selected">
+                        <DataGridTemplateColumn.CellTemplate>
+                          <DataTemplate><CheckBox IsChecked="{Binding Selected, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center"/></DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                      </DataGridTemplateColumn>
+                      <DataGridTextColumn Header="Vendor" Binding="{Binding Vendor}"/>
+                      <DataGridTextColumn Header="Model" Binding="{Binding Model}" Width="2*"/>
+                      <DataGridTextColumn Header="System IDs" Binding="{Binding SystemIds}" Width="*"/>
+                      <DataGridTextColumn Header="Driver packs for" Binding="{Binding OsSummary}" Width="2*"/>
+                      <DataGridTextColumn Header="Newest pack" Binding="{Binding Released}"/>
+                      <DataGridTextColumn Header="In configuration" Binding="{Binding InConfig}"/>
+                    </DataGrid.Columns>
+                  </DataGrid>
+                  <DockPanel Grid.Row="3" Margin="0,8,0,4">
+                    <TextBlock Text="Operating systems to add for the highlighted model" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock Style="{StaticResource Hint}" VerticalAlignment="Center" Margin="10,0,0,0"
+                               Text="Ticking a model ticks its newest build of the OS picked in the filter (Windows 11 if none). Change it here."/>
+                  </DockPanel>
+                  <DataGrid x:Name="CatalogOsGrid" Grid.Row="4" ItemsSource="{Binding SelectedItem.OperatingSystems, ElementName=CatalogGrid}">
+                    <DataGrid.Columns>
+                      <DataGridTemplateColumn Header="Add" SortMemberPath="Selected">
+                        <DataGridTemplateColumn.CellTemplate>
+                          <DataTemplate><CheckBox IsChecked="{Binding Selected, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center"/></DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                      </DataGridTemplateColumn>
+                      <DataGridTextColumn Header="Operating system" Binding="{Binding Name}"/>
+                      <DataGridTextColumn Header="Build" Binding="{Binding Build}"/>
+                      <DataGridTextColumn Header="Architecture" Binding="{Binding Architecture}"/>
+                      <DataGridTextColumn Header="Newest pack version" Binding="{Binding Version}"/>
+                      <DataGridTextColumn Header="Released" Binding="{Binding Released}"/>
+                      <DataGridTextColumn Header="In configuration" Binding="{Binding InConfigText}" Width="*"/>
+                    </DataGrid.Columns>
+                  </DataGrid>
+                  <DockPanel Grid.Row="5" Margin="0,8,0,0">
+                    <Button x:Name="CatalogAddButton" Content="Add ticked models to the configuration"/>
+                    <Button x:Name="CatalogClearButton" Content="Clear ticks"/>
+                    <TextBlock x:Name="CatalogSelectedText" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                  </DockPanel>
                 </Grid>
               </TabItem>
               <TabItem Header="Settings">
@@ -760,7 +943,8 @@ function Start-GuiScript {
         [System.Collections.IDictionary]$Arguments = @{},
         [string[]]$Switches = @(),
         [switch]$UseExitCode,
-        [switch]$RefreshStatus
+        [switch]$RefreshStatus,
+        [scriptblock]$OnSuccess       # runs in the UI when the script exits with code 0
     )
 
     if ($script:Job) {
@@ -801,6 +985,7 @@ function Start-GuiScript {
         Title         = $Title
         UseExitCode   = [bool]$UseExitCode
         RefreshStatus = [bool]$RefreshStatus
+        OnSuccess     = $OnSuccess
         Started       = Get-Date
     }
     Write-GuiOutput ("`r`n=== {0} - started {1:HH:mm:ss} ===`r`n" -f $Title, (Get-Date))
@@ -853,6 +1038,7 @@ function Complete-GuiJob {
     Set-GuiStatus "$($job.Title) $outcome."
     Update-GuiBusyState
     if ($job.RefreshStatus) { Update-StatusView }
+    if ($code -eq 0 -and $job.OnSuccess) { Invoke-GuiSafely $job.OnSuccess }
     if ($code -ne 0) {
         Show-GuiMessage -Text "$($job.Title) $outcome. See the output panel for details." -Icon Warning | Out-Null
     }
@@ -870,7 +1056,7 @@ function Update-GuiBusyState {
     $busy = $null -ne $script:Job
     $ui.CancelJobButton.IsEnabled = $busy
     $ui.JobText.Text = if ($busy) { 'Running: {0} (started {1:HH:mm:ss})' -f $script:Job.Title, $script:Job.Started } else { '' }
-    foreach ($name in @('PreflightButton', 'DryRunButton', 'FullRunButton')) { $ui[$name].IsEnabled = -not $busy }
+    foreach ($name in @('PreflightButton', 'DryRunButton', 'FullRunButton', 'CatalogScanButton')) { $ui[$name].IsEnabled = -not $busy }
     Update-ActionButtons
 }
 #endregion Running scripts
@@ -1548,6 +1734,293 @@ function Remove-GuiModel {
 }
 #endregion Configuration
 
+#region Add from vendor catalog
+$script:CatalogAges = [ordered]@{ 'Any time' = 0; 'Last 12 months' = 12; 'Last 2 years' = 24; 'Last 3 years' = 36 }
+$script:CatalogSummary = ''
+
+function ConvertTo-GuiModelKey ([string]$Vendor, [string]$Model) {
+    # Same comparison as the resolvers: case and spacing ignored, leading vendor name optional.
+    $name = ($Model -replace '\s+', ' ').Trim()
+    $name = $name -replace "^(?i)$([regex]::Escape($Vendor))\s+", ''
+    return ('{0}|{1}' -f $Vendor, $name).ToLowerInvariant()
+}
+
+function ConvertTo-GuiOsKey ([string]$Name, [string]$Build, [string]$Architecture) {
+    if (-not $Architecture) { $Architecture = 'x64' }
+    return ('{0}|{1}|{2}' -f $Name, $Build.Trim(), $Architecture).ToUpperInvariant()
+}
+
+function Get-GuiConfigLookup {
+    $lookup = @{ Names = @{}; Ids = @{} }
+    foreach ($row in $script:ModelRows) {
+        if ([string]::IsNullOrWhiteSpace($row.Model)) { continue }
+        $lookup.Names[(ConvertTo-GuiModelKey $row.Vendor $row.Model)] = $row
+        foreach ($id in ([string]$row.SystemIds -split '[,;\s]+')) {
+            if ($id) { $lookup.Ids[('{0}|{1}' -f $row.Vendor, $id).ToUpperInvariant()] = $row }
+        }
+    }
+    return $lookup
+}
+
+function Find-GuiConfigModel {
+    # The configured model a catalog model belongs to: same name, or a shared system ID.
+    param ($Lookup, [string]$Vendor, [string]$Model, [string[]]$SystemIds)
+    $row = $Lookup.Names[(ConvertTo-GuiModelKey $Vendor $Model)]
+    if ($row) { return $row }
+    foreach ($id in $SystemIds) {
+        $row = $Lookup.Ids[('{0}|{1}' -f $Vendor, $id).ToUpperInvariant()]
+        if ($row) { return $row }
+    }
+}
+
+function Get-GuiCatalogOsSummary ($Model) {
+    # "Windows 11: 25H2, 24H2; Windows 10: 22H2", or "Windows 11: x64, Arm64" for Dell.
+    $names = [ordered]@{}
+    foreach ($os in $Model.OperatingSystems) {
+        if (-not $names.Contains($os.Name)) { $names[$os.Name] = New-Object System.Collections.Generic.List[string] }
+        $token = if (-not $os.Build) { $os.Architecture } elseif ($os.Architecture -ne 'x64') { "$($os.Build) $($os.Architecture)" } else { $os.Build }
+        if ($token -and -not $names[$os.Name].Contains($token)) { $names[$os.Name].Add($token) }
+    }
+    return ((@($names.Keys) | ForEach-Object { '{0}: {1}' -f $_, ($names[$_] -join ', ') }) -join '; ')
+}
+
+function Start-GuiCatalogScan {
+    $vendors = @(@('Dell', 'HP', 'Lenovo') | Where-Object { $ui["Catalog$_"].IsChecked })
+    if ($vendors.Count -eq 0) { Show-GuiMessage -Text 'Tick at least one vendor to scan.' | Out-Null; return }
+    Start-GuiScript -Script 'Get-DriverCatalogModels.ps1' -Title 'Catalog scan' `
+        -Arguments ([ordered]@{ Vendor = $vendors; OutFile = $script:CatalogFile }) -OnSuccess { Import-GuiCatalog }
+}
+
+function Import-GuiCatalog {
+    if (-not (Test-Path -LiteralPath $script:CatalogFile)) { return }
+    # Not @(...): Windows PowerShell returns a JSON array as one object, which @() would wrap again.
+    $rows = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($script:CatalogFile))
+
+    [SDAGui.CatalogModel]::SelectedCount = 0
+    $byKey = @{}
+    $models = New-Object 'System.Collections.Generic.List[SDAGui.CatalogModel]'
+    $builds = @{}
+    foreach ($r in $rows) {
+        $key = ('{0}|{1}' -f $r.Vendor, $r.Model).ToLowerInvariant()
+        $model = $byKey[$key]
+        if ($null -eq $model) {
+            $model = [SDAGui.CatalogModel]::new()
+            $model.Vendor = [string]$r.Vendor
+            $model.Model = [string]$r.Model
+            $model.SystemIdList = [string[]]@($r.SystemIds | Where-Object { $_ })
+            $model.SystemIds = $model.SystemIdList -join ', '
+            $model.SearchText = ('{0} {1} {2}' -f $model.Vendor, $model.Model, ($model.SystemIdList -join ' ')).ToLowerInvariant()
+            $byKey[$key] = $model
+            $models.Add($model)
+        }
+        $os = [SDAGui.CatalogOs]::new()
+        $os.Parent = $model
+        $os.Name = [string]$r.OSName
+        $os.Build = [string]$r.OSBuild
+        $os.Architecture = [string]$r.Architecture
+        $os.Version = [string]$r.Version
+        $os.Released = [string]$r.ReleaseDate
+        $model.OperatingSystems.Add($os)
+        if ($os.Released -gt $model.Released) { $model.Released = $os.Released }
+        if ($os.Build) { $builds[$os.Build] = $true }
+    }
+    foreach ($model in $models) { $model.OsSummary = Get-GuiCatalogOsSummary $model }
+    $script:CatalogModels = $models
+
+    $counts = @($models | Group-Object Vendor | ForEach-Object { '{0} {1:N0}' -f $_.Name, $_.Count }) -join ', '
+    $script:CatalogSummary = 'Catalogs scanned {0:yyyy-MM-dd HH:mm}: {1} models.' -f (Get-Item -LiteralPath $script:CatalogFile).LastWriteTime, $counts
+
+    # Builds newest first; '*' (any build) last.
+    $current = [string]$ui.CatalogBuildFilter.SelectedItem
+    $buildList = @('Any') + @($builds.Keys | Where-Object { $_ -ne '*' } | Sort-Object -Descending) + @($builds.Keys | Where-Object { $_ -eq '*' })
+    $script:SuppressEvents = $true
+    try {
+        $ui.CatalogBuildFilter.ItemsSource = $buildList
+        $ui.CatalogBuildFilter.SelectedItem = $(if ($buildList -contains $current) { $current } else { 'Any' })
+    } finally {
+        $script:SuppressEvents = $false
+    }
+    Update-GuiCatalogPreference
+    Update-GuiCatalogInConfig
+    Update-GuiCatalogView
+}
+
+function Update-GuiCatalogPreference {
+    # Which OS ticking a model selects: the OS and build chosen in the filter.
+    $os = [string]$ui.CatalogOsFilter.SelectedItem
+    $build = [string]$ui.CatalogBuildFilter.SelectedItem
+    [SDAGui.CatalogModel]::PreferredOs = $(if ($os -and $os -ne 'Any') { $os } else { 'Windows 11' })
+    [SDAGui.CatalogModel]::PreferredBuild = $(if ($build -and $build -ne 'Any') { $build } else { '' })
+}
+
+function Update-GuiCatalogInConfig {
+    if (-not $script:CatalogModels -or -not $script:ModelRows) { return }
+    $lookup = Get-GuiConfigLookup
+    foreach ($model in $script:CatalogModels) {
+        $row = Find-GuiConfigModel -Lookup $lookup -Vendor $model.Vendor -Model $model.Model -SystemIds $model.SystemIdList
+        if (-not $row) {
+            if ($model.InConfig) {
+                $model.InConfig = ''
+                foreach ($os in $model.OperatingSystems) { $os.InConfig = $false }
+            }
+            continue
+        }
+        $configured = @{}
+        foreach ($os in $row.OperatingSystems) { $configured[(ConvertTo-GuiOsKey $os.Name $os.Build $os.Architecture)] = $true }
+        $count = 0
+        foreach ($os in $model.OperatingSystems) {
+            $os.InConfig = $configured.ContainsKey((ConvertTo-GuiOsKey $os.Name $os.Build $os.Architecture))
+            if ($os.InConfig) { $count++ }
+        }
+        # A match on system ID alone means the vendor ships one pack for several models (HP platforms,
+        # Lenovo Intel/AMD splits); adding this model extends that configured entry.
+        $label = if ($lookup.Names.ContainsKey((ConvertTo-GuiModelKey $model.Vendor $model.Model))) { 'Yes' } else { "Via '$($row.Model)'" }
+        $model.InConfig = if ($count -eq $model.OperatingSystems.Count) { $label } else { '{0} ({1} of {2} OS)' -f $label, $count, $model.OperatingSystems.Count }
+    }
+}
+
+function Update-GuiCatalogView {
+    if ($script:SuppressEvents) { return }
+    if (-not $script:CatalogModels) {
+        $ui.CatalogGrid.ItemsSource = $null
+        $ui.CatalogInfoText.Text = 'No catalog data yet. Pick the vendors and click Scan catalogs. Only the catalogs are downloaded (a few MB), not driver packs.'
+        Update-GuiCatalogCount
+        return
+    }
+
+    $terms = @($ui.CatalogSearch.Text.ToLowerInvariant() -split '\s+' | Where-Object { $_ })
+    $vendor = [string]$ui.CatalogVendorFilter.SelectedItem
+    $os = [string]$ui.CatalogOsFilter.SelectedItem
+    $build = [string]$ui.CatalogBuildFilter.SelectedItem
+    $months = [int]$script:CatalogAges[[string]$ui.CatalogAgeFilter.SelectedItem]
+    $since = if ($months) { (Get-Date).AddMonths(-$months).ToString('yyyy-MM-dd') } else { '' }
+    $hideConfigured = [bool]$ui.CatalogHideConfigured.IsChecked
+    $tickedOnly = [bool]$ui.CatalogSelectedOnly.IsChecked
+    $filterOs = ($os -ne 'Any') -or ($build -ne 'Any') -or $since
+
+    $list = New-Object System.Collections.Generic.List[object]
+    :model foreach ($m in $script:CatalogModels) {
+        if ($vendor -ne 'All' -and $m.Vendor -ne $vendor) { continue }
+        if ($hideConfigured -and $m.InConfig) { continue }
+        if ($tickedOnly -and -not $m.Selected) { continue }
+        foreach ($term in $terms) { if (-not $m.SearchText.Contains($term)) { continue model } }
+        if ($filterOs) {
+            # At least one pack must fit the OS, build and age filters. Dell packs have no build.
+            $fits = $false
+            foreach ($o in $m.OperatingSystems) {
+                if ($os -ne 'Any' -and $o.Name -ne $os) { continue }
+                if ($build -ne 'Any' -and $o.Build -and $o.Build -ne $build) { continue }
+                if ($since -and $o.Released -lt $since) { continue }
+                $fits = $true
+                break
+            }
+            if (-not $fits) { continue }
+        }
+        $list.Add($m)
+    }
+    $ui.CatalogGrid.ItemsSource = $list
+    $ui.CatalogInfoText.Text = '{0} Showing {1:N0}.' -f $script:CatalogSummary, $list.Count
+    Update-GuiCatalogCount
+}
+
+function Update-GuiCatalogCount {
+    $count = [SDAGui.CatalogModel]::SelectedCount
+    $ui.CatalogSelectedText.Text = switch ($count) { 0 { '' } 1 { '1 model ticked' } default { "$count models ticked" } }
+    $ui.CatalogAddButton.IsEnabled = $count -gt 0
+    $ui.CatalogClearButton.IsEnabled = $count -gt 0
+}
+
+function Clear-GuiCatalogSelection {
+    if (-not $script:CatalogModels) { return }
+    foreach ($m in $script:CatalogModels) { if ($m.Selected) { $m.Selected = $false } }
+    Update-GuiCatalogCount
+}
+
+function Show-GuiCatalogTab {
+    if (-not $script:CatalogModels -and (Test-Path -LiteralPath $script:CatalogFile)) { Import-GuiCatalog; return }
+    Update-GuiCatalogInConfig
+    Update-GuiCatalogView
+}
+
+function Add-GuiCatalogSelection {
+    <#
+    .SYNOPSIS
+        Adds the ticked models and operating systems to the Models list. A model already in the
+        configuration (same name or a shared system ID) gets the missing OS entries and system IDs.
+    #>
+    if ($null -eq $script:ModelRows) { throw 'The configuration is not loaded.' }
+    $picked = @($script:CatalogModels | Where-Object { $_.Selected })
+    if ($picked.Count -eq 0) { Show-GuiMessage -Text 'Tick at least one model first.' | Out-Null; return }
+
+    [void]$ui.OsGrid.CommitEdit([System.Windows.Controls.DataGridEditingUnit]::Row, $true)
+    [void]$ui.ModelsGrid.CommitEdit([System.Windows.Controls.DataGridEditingUnit]::Row, $true)
+    $lookup = Get-GuiConfigLookup
+    $newModels = 0
+    $updatedModels = 0
+    $newOs = 0
+    foreach ($m in $picked) {
+        $row = Find-GuiConfigModel -Lookup $lookup -Vendor $m.Vendor -Model $m.Model -SystemIds $m.SystemIdList
+        $isNew = $null -eq $row
+        $missingIds = @()
+        if ($isNew) {
+            $row = New-Object SDAGui.ModelRow
+            $row.Vendor = $m.Vendor
+            $row.Model = $m.Model
+            $row.SystemIds = $m.SystemIds
+            $row.Enabled = $true
+        } else {
+            $ids = @([string]$row.SystemIds -split '[,;\s]+' | Where-Object { $_ } | ForEach-Object { $_.ToUpperInvariant() })
+            $missingIds = @($m.SystemIdList | Where-Object { $ids -notcontains $_ })
+            if ($missingIds.Count) { $row.SystemIds = (@($ids) + $missingIds) -join ', ' }
+        }
+
+        $configured = @{}
+        foreach ($os in $row.OperatingSystems) { $configured[(ConvertTo-GuiOsKey $os.Name $os.Build $os.Architecture)] = $true }
+        $added = 0
+        foreach ($os in @($m.OperatingSystems | Where-Object { $_.Selected })) {
+            $key = ConvertTo-GuiOsKey $os.Name $os.Build $os.Architecture
+            if ($configured.ContainsKey($key)) { continue }
+            $osRow = New-Object SDAGui.OsRow
+            $osRow.Name = $os.Name
+            $osRow.Build = $os.Build
+            $osRow.Architecture = $os.Architecture
+            $row.OperatingSystems.Add($osRow)
+            $configured[$key] = $true
+            $added++
+        }
+        $newOs += $added
+
+        if ($isNew) {
+            $script:ModelRows.Add($row)
+            $newModels++
+            $lookup.Names[(ConvertTo-GuiModelKey $row.Vendor $row.Model)] = $row
+            foreach ($id in $m.SystemIdList) { $lookup.Ids[('{0}|{1}' -f $row.Vendor, $id).ToUpperInvariant()] = $row }
+        } elseif ($added -or $missingIds.Count) {
+            $updatedModels++
+        }
+    }
+
+    Clear-GuiCatalogSelection
+    try { $ui.ModelsGrid.Items.Refresh() } catch { }
+    Update-GuiCatalogInConfig
+    Update-GuiCatalogView
+
+    if ($newModels -eq 0 -and $updatedModels -eq 0) {
+        Show-GuiMessage -Text 'Everything you ticked is already in the configuration.' | Out-Null
+        return
+    }
+    $summary = 'Added {0} new model(s) and {1} operating system entr{2}' -f $newModels, $newOs, $(if ($newOs -eq 1) { 'y' } else { 'ies' })
+    if ($updatedModels) { $summary += " ($updatedModels existing model(s) updated)" }
+    $answer = Show-GuiMessage -Icon Question -Buttons YesNo -Text ("$summary.`n`nSave the configuration now? The models then appear on the Models & versions tab as 'Not run yet', and the next run downloads their driver packs.`n`nChoose No to review them on the Models tab first.")
+    if ($answer -eq 'Yes' -and (Save-GuiConfig)) {
+        $ui.MainTabs.SelectedItem = $ui.StatusTab
+        return
+    }
+    $ui.ConfigTabs.SelectedItem = $ui.ConfigModelsTab
+    Set-GuiStatus "$summary. Review them on the Models tab, then click Save."
+}
+#endregion Add from vendor catalog
+
 #region Logs and reports
 function Update-LogFileList {
     param ([string]$Select)
@@ -1689,6 +2162,32 @@ $ui.NotepadConfigButton.add_Click({
         }
     })
 $ui.AddModelButton.add_Click({ Invoke-GuiSafely { Add-GuiModel } })
+$ui.BrowseCatalogButton.add_Click({ $ui.ConfigTabs.SelectedItem = $ui.CatalogTab })
+$ui.ConfigTabs.add_SelectionChanged({
+        param($sender, $e)
+        if ($e.OriginalSource -ne $ui.ConfigTabs) { return }
+        if ($ui.ConfigTabs.SelectedItem -eq $ui.CatalogTab) { Invoke-GuiSafely { Show-GuiCatalogTab } }
+    })
+
+# Add from vendor catalog
+$ui.CatalogVendorFilter.ItemsSource = @('All', 'Dell', 'HP', 'Lenovo')
+$ui.CatalogVendorFilter.SelectedIndex = 0
+$ui.CatalogOsFilter.ItemsSource = @('Any', 'Windows 11', 'Windows 10')
+$ui.CatalogOsFilter.SelectedIndex = 0
+$ui.CatalogBuildFilter.ItemsSource = @('Any')
+$ui.CatalogBuildFilter.SelectedIndex = 0
+$ui.CatalogAgeFilter.ItemsSource = @($script:CatalogAges.Keys)
+$ui.CatalogAgeFilter.SelectedItem = 'Last 2 years'
+$ui.CatalogScanButton.add_Click({ Invoke-GuiSafely { Start-GuiCatalogScan } })
+$ui.CatalogAddButton.add_Click({ Invoke-GuiSafely { Add-GuiCatalogSelection } })
+$ui.CatalogClearButton.add_Click({ Invoke-GuiSafely { Clear-GuiCatalogSelection; Update-GuiCatalogView } })
+$ui.CatalogSearch.add_TextChanged({ Invoke-GuiSafely { Update-GuiCatalogView } })
+foreach ($name in @('CatalogVendorFilter', 'CatalogOsFilter', 'CatalogBuildFilter', 'CatalogAgeFilter')) {
+    $ui[$name].add_SelectionChanged({ if (-not $script:SuppressEvents) { Invoke-GuiSafely { Update-GuiCatalogPreference; Update-GuiCatalogView } } })
+}
+foreach ($name in @('CatalogHideConfigured', 'CatalogSelectedOnly')) {
+    $ui[$name].add_Click({ Invoke-GuiSafely { Update-GuiCatalogView } })
+}
 $ui.RemoveModelButton.add_Click({ Invoke-GuiSafely { Remove-GuiModel } })
 $ui.AddOsButton.add_Click({
         Invoke-GuiSafely {
@@ -1732,6 +2231,7 @@ $ui.MainTabs.add_SelectionChanged({
             if ($ui.MainTabs.SelectedItem -eq $ui.LogsTab) { Update-LogFileList; Update-LogView }
             elseif ($ui.MainTabs.SelectedItem -eq $ui.ReportsTab) { Update-ReportList }
             elseif ($ui.MainTabs.SelectedItem -eq $ui.RunTab) { Update-TaskView }
+            elseif ($ui.MainTabs.SelectedItem -eq $ui.ConfigTab -and $ui.ConfigTabs.SelectedItem -eq $ui.CatalogTab) { Show-GuiCatalogTab }
         }
     })
 
@@ -1748,6 +2248,7 @@ $timer.add_Tick({
                 Receive-GuiJobOutput
                 if ($script:Job.Process.HasExited) { Complete-GuiJob }
             }
+            if ($ui.MainTabs.SelectedItem -eq $ui.ConfigTab -and $ui.ConfigTabs.SelectedItem -eq $ui.CatalogTab) { Update-GuiCatalogCount }
             $script:TickCount++
             if ($script:TickCount % 10 -eq 0) {
                 if ($ui.LogAutoRefresh.IsChecked -and $ui.MainTabs.SelectedItem -eq $ui.LogsTab) { Update-LogView }
