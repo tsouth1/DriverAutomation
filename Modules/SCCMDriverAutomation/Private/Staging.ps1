@@ -126,8 +126,23 @@ function Test-SDAFreeSpace {
     )
 
     $root = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($Path))
-    $drive = New-Object System.IO.DriveInfo($root)
-    $freeGB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 1)
+    if ($root.StartsWith('\\')) {
+        # DriveInfo does not accept shares; GetDiskFreeSpaceEx does (quota-aware, as seen by this account).
+        if (-not ('SDA.NativeDisk' -as [type])) {
+            Add-Type -Namespace SDA -Name NativeDisk -MemberDefinition @'
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern bool GetDiskFreeSpaceEx(string directory, out ulong freeBytesAvailable, out ulong totalBytes, out ulong totalFreeBytes);
+'@
+        }
+        $available = [uint64]0; $total = [uint64]0; $totalFree = [uint64]0
+        if (-not [SDA.NativeDisk]::GetDiskFreeSpaceEx($root.TrimEnd('\') + '\', [ref]$available, [ref]$total, [ref]$totalFree)) {
+            throw "Cannot read free space on $root (error $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error()))."
+        }
+        $freeGB = [Math]::Round($available / 1GB, 1)
+    } else {
+        $drive = New-Object System.IO.DriveInfo($root)
+        $freeGB = [Math]::Round($drive.AvailableFreeSpace / 1GB, 1)
+    }
     if ($freeGB -lt $MinimumGB) {
         throw "Insufficient free space on $root ($freeGB GB free, $MinimumGB GB required by General.MinimumFreeSpaceGB)."
     }
@@ -291,13 +306,24 @@ function New-SDAPackageContent {
     try {
         if ($Config.ConfigMgr.ContentFormat -eq 'WIM') {
             $wim = Join-Path $building 'DriverPackage.wim'
+            # On a remote share, capture to the local data root and copy the finished image across.
+            $capture = if ($wim.StartsWith('\\')) { "$ExtractPath.wim" } else { $wim }
             $dismLog = Join-Path $Config.Paths.Logs ("dism-{0}.log" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
             $dism = Join-Path $env:SystemRoot 'System32\dism.exe'
             $safeName = $ImageName -replace '"', ''
-            $arguments = '/English /Capture-Image /ImageFile:"{0}" /CaptureDir:"{1}" /Name:"{2}" /Description:"{2}" /Compress:max /CheckIntegrity /LogPath:"{3}"' -f $wim, $ExtractPath.TrimEnd('\'), $safeName, $dismLog
-            Write-SDALog "Capturing WIM: $wim"
-            $exit = Invoke-SDAProcess -FilePath $dism -Arguments $arguments -TimeoutMinutes ([int]$Config.Extraction.TimeoutMinutes * 2)
-            if ($exit -ne 0 -or -not (Test-Path -LiteralPath $wim)) { throw "DISM capture failed with exit code $exit - see $dismLog" }
+            $arguments = '/English /Capture-Image /ImageFile:"{0}" /CaptureDir:"{1}" /Name:"{2}" /Description:"{2}" /Compress:max /CheckIntegrity /LogPath:"{3}"' -f $capture, $ExtractPath.TrimEnd('\'), $safeName, $dismLog
+            Write-SDALog "Capturing WIM: $capture"
+            try {
+                $exit = Invoke-SDAProcess -FilePath $dism -Arguments $arguments -TimeoutMinutes ([int]$Config.Extraction.TimeoutMinutes * 2)
+                if ($exit -ne 0 -or -not (Test-Path -LiteralPath $capture)) { throw "DISM capture failed with exit code $exit - see $dismLog" }
+                if ($capture -ne $wim) {
+                    Write-SDALog "Copying WIM to $wim"
+                    Copy-Item -LiteralPath $capture -Destination $wim -Force
+                    if ((Get-Item -LiteralPath $wim).Length -ne (Get-Item -LiteralPath $capture).Length) { throw "Copy of the WIM to $wim is incomplete." }
+                }
+            } finally {
+                if ($capture -ne $wim) { Remove-Item -LiteralPath $capture -Force -ErrorAction SilentlyContinue }
+            }
             $Manifest['ContentFile'] = 'DriverPackage.wim'
             $Manifest['ContentSizeBytes'] = (Get-Item -LiteralPath $wim).Length
         } else {

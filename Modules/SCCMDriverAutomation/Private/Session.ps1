@@ -54,24 +54,42 @@ function Test-SDAPrerequisites {
 
     $localRoot = $Config.ConfigMgr.PackageSourceLocalRoot
     $uncRoot = $Config.ConfigMgr.PackageSourceUncRoot
-    try {
-        if (-not (Test-Path -LiteralPath $localRoot)) {
-            New-Item -Path $localRoot -ItemType Directory -Force | Out-Null
-            Write-SDALog "Created package source root $localRoot."
-        }
-        # Prove the UNC path really is the local folder: write a probe locally, read it back via UNC.
-        $probeName = ".sda-probe-$([guid]::NewGuid().ToString('N'))"
-        $probeLocal = Join-Path $localRoot $probeName
-        Set-Content -LiteralPath $probeLocal -Value $env:COMPUTERNAME -Encoding ASCII
+    if ($Config.Paths.PackageSourceRemote) {
+        # Content goes straight to the share: prove it is reachable and writable by this account.
         try {
-            if (-not (Test-Path -LiteralPath (Join-Path $uncRoot $probeName))) {
-                $problems.Add("PackageSourceUncRoot '$uncRoot' does not resolve to PackageSourceLocalRoot '$localRoot' (probe file not visible via UNC, or the share denies access to $(Get-SDAInitiator)).")
+            $share = [System.IO.Path]::GetPathRoot($uncRoot)
+            if (-not (Test-Path -LiteralPath $share)) { throw "Share $share does not exist or is not reachable." }
+            if (-not (Test-Path -LiteralPath $uncRoot)) {
+                New-Item -Path $uncRoot -ItemType Directory -Force | Out-Null
+                Write-SDALog "Created package source root $uncRoot."
             }
-        } finally {
-            Remove-Item -LiteralPath $probeLocal -Force -ErrorAction SilentlyContinue
+            $probe = Join-Path $uncRoot ".sda-probe-$([guid]::NewGuid().ToString('N'))"
+            Set-Content -LiteralPath $probe -Value $env:COMPUTERNAME -Encoding ASCII
+            Remove-Item -LiteralPath $probe -Force
+            Write-SDALog "Package source $uncRoot is on another server; content is written to it directly."
+        } catch {
+            $problems.Add("PackageSourceUncRoot '$uncRoot' is not writable by $(Get-SDAInitiator): $($_.Exception.Message) Grant this computer account Modify on the share and the folder.")
         }
-    } catch {
-        $problems.Add("Package source root check failed: $($_.Exception.Message)")
+    } else {
+        try {
+            if (-not (Test-Path -LiteralPath $localRoot)) {
+                New-Item -Path $localRoot -ItemType Directory -Force | Out-Null
+                Write-SDALog "Created package source root $localRoot."
+            }
+            # Prove the UNC path really is the local folder: write a probe locally, read it back via UNC.
+            $probeName = ".sda-probe-$([guid]::NewGuid().ToString('N'))"
+            $probeLocal = Join-Path $localRoot $probeName
+            Set-Content -LiteralPath $probeLocal -Value $env:COMPUTERNAME -Encoding ASCII
+            try {
+                if (-not (Test-Path -LiteralPath (Join-Path $uncRoot $probeName))) {
+                    $problems.Add("PackageSourceUncRoot '$uncRoot' does not resolve to PackageSourceLocalRoot '$localRoot' (probe file not visible via UNC, or the share denies access to $(Get-SDAInitiator)). If the share is on another server, leave PackageSourceLocalRoot blank.")
+                }
+            } finally {
+                Remove-Item -LiteralPath $probeLocal -Force -ErrorAction SilentlyContinue
+            }
+        } catch {
+            $problems.Add("Package source root check failed: $($_.Exception.Message)")
+        }
     }
 
     foreach ($path in @($Config.Paths.DataRoot, $localRoot)) {

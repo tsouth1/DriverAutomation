@@ -84,8 +84,16 @@ design differs.
 
 * Windows Server 2016 or later on the **site server** (primary or CAS), with Windows PowerShell 5.1.
   `dism.exe`, `expand.exe` and `robocopy.exe` are built in.
-* A package source share on that server. Set `PackageSourceLocalRoot` to the local path and
-  `PackageSourceUncRoot` to the UNC path of the same folder. The preflight proves they match.
+* A package source share. Set `PackageSourceUncRoot` to its UNC path.
+  * Share on the server running the tool: also set `PackageSourceLocalRoot` to the local path of the
+    same folder. The preflight proves they match.
+  * Share on another server (a file server, or the site server when the tool runs elsewhere): leave
+    `PackageSourceLocalRoot` blank. Content is written to the share directly; WIMs are captured under
+    `DataRoot` first and copied across. The preflight checks the share is writable. The site server's
+    computer account needs Read on that share so it can distribute the content.
+* Running on a server other than the site server: set `ConfigMgr.SiteCode` and
+  `ConfigMgr.ProviderMachine` (auto-detection only works on the SMS Provider), and use that server's
+  computer account wherever this README says site server computer account.
 * Disk space: driver packs are 1–3 GB each, plus the WIM. Size `MinimumFreeSpaceGB` accordingly.
 * Outbound HTTPS to the vendor domains (see [Network](#network-proxy-and-security-tooling)).
 * ConfigMgr rights for the site server **computer account** (see next section).
@@ -109,7 +117,7 @@ account is involved. One-time setup:
 3. Refresh the computer account's Kerberos ticket so it picks up the new group: reboot, or run
    `klist -li 0x3e7 purge` from an elevated prompt.
 4. Give the computer account **Modify** on the package source folder (share and NTFS). This is usually
-   already in place on a site server.
+   already in place on a site server, but not on a separate file server.
 
 Administrators who run the rollback and promotion scripts use their own ConfigMgr rights. Those
 scripts must be run elevated on the site server.

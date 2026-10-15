@@ -221,7 +221,7 @@ $script:SettingSpec = @(
     @{ Path = 'ConfigMgr.SiteCode'; Type = 'Text'; Label = 'Site code'; Help = 'Leave blank to detect it from the local SMS Provider.' }
     @{ Path = 'ConfigMgr.ProviderMachine'; Type = 'Text'; Label = 'SMS Provider server'; Help = 'Leave blank to detect it.' }
     @{ Path = 'ConfigMgr.CimProtocol'; Type = 'Choice'; Choices = @('Dcom', 'Wsman'); Label = 'Provider protocol'; Help = 'Dcom has no WinRM dependency.' }
-    @{ Path = 'ConfigMgr.PackageSourceLocalRoot'; Type = 'Text'; Label = 'Package source (local path)'; Help = 'Where versioned content is staged, as a local path on this server. Example: E:\Sources\DriverPackages' }
+    @{ Path = 'ConfigMgr.PackageSourceLocalRoot'; Type = 'Text'; Label = 'Package source (local path)'; Help = 'The package folder as a local path, when the share is on this server. Example: E:\Sources\DriverPackages. Leave blank when the share is on another server; content is then written to the UNC path directly.' }
     @{ Path = 'ConfigMgr.PackageSourceUncRoot'; Type = 'Text'; Label = 'Package source (UNC path)'; Help = 'The same folder as a UNC path. ConfigMgr packages point here. Example: \\CM01.corp.local\Sources$\DriverPackages' }
     @{ Path = 'ConfigMgr.ContentFormat'; Type = 'Choice'; Choices = @('WIM', 'Raw'); Label = 'Content format'; Help = 'WIM: one compressed image per version. Raw: extracted driver folders.' }
     @{ Path = 'ConfigMgr.ProductionNamePrefix'; Type = 'Text'; Label = 'Production package prefix'; Help = '' }
@@ -1636,7 +1636,7 @@ function Get-GuiPathWarning {
     param ([string]$Label, [string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path)) { return }
-    if ($Path.StartsWith('\\')) { return "$Label '$Path' is a UNC path. It must be a local path on this server." }
+    if ($Path.StartsWith('\\')) { return "$Label '$Path' is a UNC path. Use a local path on this server$(if ($Label -like 'Package source*') { ', or leave it blank when the share is on another server' })." }
     try { $root = [System.IO.Path]::GetPathRoot($Path) } catch { return "$Label '$Path' is not a valid path." }
     if ($root -notmatch '^[A-Za-z]:\\$') { return "$Label '$Path' is not a full path such as D:\SCCMDriverAutomation." }
     $drive = New-Object System.IO.DriveInfo($root)

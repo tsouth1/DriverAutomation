@@ -81,7 +81,7 @@ function Get-SDADefaultConfig {
             SiteCode                     = ''                  # blank = auto-detect from the local SMS Provider
             ProviderMachine              = ''                  # blank = auto-detect
             CimProtocol                  = 'Dcom'              # Dcom (no WinRM dependency) or Wsman
-            PackageSourceLocalRoot       = ''                  # e.g. E:\Sources\Drivers (local path on this server)
+            PackageSourceLocalRoot       = ''                  # e.g. E:\Sources\Drivers (local path on this server); blank = share is on another server
             PackageSourceUncRoot         = ''                  # e.g. \\CM01.corp.local\Sources$\Drivers (same folder, UNC)
             ContentFormat                = 'WIM'               # WIM (DISM-captured, compact) or Raw (extracted folders)
             ProductionNamePrefix         = 'Drivers'
@@ -166,6 +166,13 @@ function Import-SDAConfig {
     }
 
     Test-SDAConfig -Config $config
+
+    # Remote package source: with no local path (or the UNC path itself), content is written straight to
+    # the share. This lets the tool run on a server other than the one hosting the package sources.
+    $cm = $config.ConfigMgr
+    $config.Paths['PackageSourceRemote'] = [string]::IsNullOrWhiteSpace($cm.PackageSourceLocalRoot) -or ([string]$cm.PackageSourceLocalRoot).StartsWith('\\')
+    if ($config.Paths.PackageSourceRemote) { $cm.PackageSourceLocalRoot = $cm.PackageSourceUncRoot }
+
     $config['Targets'] = @(Get-SDATargets -Config $config)
     return $config
 }
@@ -183,9 +190,12 @@ function Test-SDAConfig {
     if ([string]::IsNullOrWhiteSpace($Config.General.DataRoot)) { $problems.Add('General.DataRoot is required.') }
 
     $cm = $Config.ConfigMgr
-    if ([string]::IsNullOrWhiteSpace($cm.PackageSourceLocalRoot)) { $problems.Add('ConfigMgr.PackageSourceLocalRoot is required (local path on this server).') }
     if ([string]::IsNullOrWhiteSpace($cm.PackageSourceUncRoot) -or $cm.PackageSourceUncRoot -notmatch '^\\\\[^\\]+\\[^\\]+') {
-        $problems.Add('ConfigMgr.PackageSourceUncRoot must be a UNC path (\\server\share\...) that points at PackageSourceLocalRoot.')
+        $problems.Add('ConfigMgr.PackageSourceUncRoot must be a UNC path (\\server\share\...).')
+    }
+    $localRoot = [string]$cm.PackageSourceLocalRoot
+    if ($localRoot.StartsWith('\\') -and $localRoot.TrimEnd('\') -ne ([string]$cm.PackageSourceUncRoot).TrimEnd('\')) {
+        $problems.Add('ConfigMgr.PackageSourceLocalRoot must be a local path on this server, or blank when the share is on another server.')
     }
     if ($cm.ContentFormat -notin @('WIM', 'Raw')) { $problems.Add("ConfigMgr.ContentFormat must be 'WIM' or 'Raw'.") }
     if ($cm.CimProtocol -notin @('Dcom', 'Wsman')) { $problems.Add("ConfigMgr.CimProtocol must be 'Dcom' or 'Wsman'.") }
